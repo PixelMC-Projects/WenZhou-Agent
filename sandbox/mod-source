@@ -1,0 +1,9 @@
+#!/bin/bash
+# Decompile one class inside the disposable jail. JVM class names are data, not executable input.
+set -euo pipefail
+if [[ $# != 2 || ! -f "$1" ]]; then echo 'Usage: mod-source JAR fully.qualified.ClassName' >&2; exit 2; fi
+jar_path=$(realpath -- "$1")
+entry="${2//./\/}.class"
+work=$(mktemp -d /tmp/mod-source.XXXXXX)
+unzip -p "$jar_path" "$entry" > "$work/input.class"
+java -jar /opt/tools/cfr.jar "$work/input.class" --silent true --showversion false

@@ -1,0 +1,40 @@
+#!/bin/sh
+# nsjail starts bash inside its namespaces. The outer shell never evaluates model input.
+set -eu
+[ "$(id -u)" -ne 0 ] || exit 126
+
+within_limit() {
+    [ -r "$1" ] && read -r limit < "$1" || return 1
+    case $limit in ''|*[!0-9]*) return 1 ;; esac
+    [ "$limit" -gt 0 ] && [ "$limit" -le "$2" ]
+}
+
+join_limits() {
+    base=/sys/fs/cgroup
+    if [ -e "$base/cgroup.controllers" ]; then
+        group=$base/wenzhou-read
+        [ -w "$group/cgroup.procs" ] &&
+            within_limit "$group/memory.max" 402653184 &&
+            within_limit "$group/pids.max" 40 &&
+            echo "$$" > "$group/cgroup.procs"
+    else
+        memory=$base/memory/wenzhou-read
+        pids=$base/pids/wenzhou-read
+        [ -w "$memory/cgroup.procs" ] && [ -w "$pids/cgroup.procs" ] &&
+            within_limit "$memory/memory.limit_in_bytes" 402653184 &&
+            within_limit "$pids/pids.max" 40 &&
+            echo "$$" > "$memory/cgroup.procs" && echo "$$" > "$pids/cgroup.procs"
+    fi
+}
+
+# On WSL the first user process can start before the boot hook finishes provisioning.
+attempt=0
+until join_limits; do
+    if [ "$attempt" -ge 60 ]; then
+        echo 'Gameplay sandbox resource limits unavailable.' >&2
+        exit 125
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.05
+done
+exec /usr/local/bin/nsjail --config /etc/wenzhouai/shell.cfg -- /bin/bash -c 'exec /bin/bash --noprofile --norc -s 2>&1'

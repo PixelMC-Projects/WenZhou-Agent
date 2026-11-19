@@ -1,0 +1,28 @@
+.wza-module .wza-quota-controls,.wza-module .wza-quota-amount { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+.wza-module .wza-quota-controls { margin-top:32px; justify-content:space-between; }
+.wza-module .wza-quota-amount { font-size:13px; }
+.wza-module label.wza-quota-amount { display:inline-flex; width:auto; flex-flow:row nowrap; align-items:center; gap:10px; margin:0; }
+.wza-module label.wza-quota-amount > span { margin:0; white-space:nowrap; }
+.wza-module label.wza-quota-amount > .wza-amount-value { display:inline-flex; flex:0 0 auto; align-items:center; gap:6px; }
+.wza-module .wza-quota-amount .wza-amount-value > input { box-sizing:border-box; width:72px; min-width:0; height:30px; min-height:0; margin:0; padding:3px 7px; text-align:right; font-variant-numeric:tabular-nums; }
+.wza-module .wza-amount-value > span { margin:0; }
+.wza-module .wza-quota-controls { flex-wrap:nowrap; }
+.wza-module .wza-quota-controls > button { white-space:nowrap; flex:none; }
+.wza-module .content-area[data-agreement] .wza-grid.wza-players {
+  grid-template-columns:minmax(120px,2fr) minmax(48px,.7fr) minmax(54px,.8fr) minmax(46px,.6fr) minmax(62px,.8fr) minmax(65px,.8fr) minmax(85px,1fr);
+  gap:clamp(5px,1vw,15px);
+}
+.wza-module .content-area[data-agreement="hidden"] .wza-grid.wza-players {
+  grid-template-columns:minmax(120px,2fr) minmax(48px,.7fr) minmax(46px,.6fr) minmax(62px,.8fr) minmax(65px,.8fr) minmax(85px,1fr);
+}
+.wza-module .wza-quota-remaining { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; }
+.wza-module .wza-quota-ring { width:15px; height:15px; flex:none; border-radius:50%; background:conic-gradient(var(--accent) var(--quota-fill),var(--border) 0); mask:radial-gradient(circle,transparent 4px,#000 5px); }
+.wza-module .wza-player-quota > h3 { margin-bottom:18px; }
+.wza-module .wza-player-quota > .switch-row + .wza-personal-limit { margin-top:18px; }
+.wza-module .wza-personal-limit-controls { display:inline-flex; align-items:center; gap:12px; margin-left:auto; }
+.wza-module .wza-quota-total,.wza-module .wza-quota-remaining { font-variant-numeric:tabular-nums; }
+.wza-module .wza-players .column-sort { white-space:normal; text-align:left; }
+@media(max-width:720px) {
+  .wza-module .content-area:has(.wza-players) { overflow-x:auto; }
+  .wza-module .content-area:has(.wza-players)>.table-heading,.wza-module .content-area:has(.wza-players)>.scrolling-rows { min-width:540px; }
+}

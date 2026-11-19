@@ -1,0 +1,5 @@
+# Copy to Forge config/wenzhouai-admin.properties, then replace the example values.
+publicOrigin=https://manager.example.com
+managerBase=http://127.0.0.1:18801
+listenPort=18727
+ownerPlayerUuid=00000000-0000-0000-0000-000000000001

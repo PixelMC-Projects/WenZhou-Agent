@@ -1,0 +1,23 @@
+#!/bin/sh
+# Provision cgroups in the query worker's Linux environment, as root, at boot.
+set -eu
+group=wenzhou-read
+user=${1:-wenzhou}
+if [ -e /sys/fs/cgroup/cgroup.controllers ]; then
+    parent=/sys/fs/cgroup
+    echo '+memory +pids' > "$parent/cgroup.subtree_control"
+    mkdir -p "$parent/$group"
+    echo 402653184 > "$parent/$group/memory.max"
+    echo 40 > "$parent/$group/pids.max"
+    chown "$user" "$parent/$group/cgroup.procs"
+else
+    for controller in memory pids; do
+        dir="/sys/fs/cgroup/$controller/$group"
+        mkdir -p "$dir"
+        case "$controller" in
+            memory) echo 402653184 > "$dir/memory.limit_in_bytes" ;;
+            pids) echo 40 > "$dir/pids.max" ;;
+        esac
+        chown "$user" "$dir/cgroup.procs"
+    done
+fi

@@ -1,0 +1,46 @@
+buildscript {
+    repositories {
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        maven { url = 'https://maven.minecraftforge.net' }
+        maven { url = 'https://maven.aliyun.com/repository/gradle-plugin' }
+        mavenCentral()
+    }
+    dependencies { classpath 'net.minecraftforge.gradle:ForgeGradle:6.0.54' }
+}
+apply plugin: 'net.minecraftforge.gradle'
+
+group = 'com.pixelmc.wenzhouai'
+version = '0.1.9-dev'
+base { archivesName = 'wenzhouai-forge-1.20.1' }
+java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
+minecraft { mappings channel: 'official', version: '1.20.1' }
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    maven { url = 'https://bmclapi2.bangbang93.com/maven' }
+}
+repositories.configureEach { repo ->
+    if (repo instanceof MavenArtifactRepository && repo.url.host in ['maven.minecraftforge.net', 'libraries.minecraft.net']) {
+        repo.url = 'https://bmclapi2.bangbang93.com/maven'
+    }
+}
+
+// Dependency projects supply their development classes. Forge loads their own jars at runtime.
+def hubProject = file(findProperty('hubProject') ?: '../PixelMCPlayerHub/minecraft')
+def managerProject = file(findProperty('managerProject') ?: '../pixelmcmanager/forge/pixelmcmanager-forge-1.20.1')
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.3.33'
+    compileOnly files(new File(hubProject, 'build/classes/java/main'), new File(managerProject, 'build/classes/java/main'))
+    compileOnly 'io.github.humbleui:skija-shared:0.143.18'
+    compileOnly 'io.github.humbleui:types:0.2.0'
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+tasks.named('jar', Jar) {
+    manifest.attributes('Implementation-Title': 'WenZhou Agent', 'Implementation-Version': project.version,
+            'MixinConfigs': 'wenzhouai.client.mixins.json')
+    from('LICENSE','NOTICE.md')
+    into('licenses/wenzhou-admin') {
+        from('admin-web/LICENSE', 'admin-web/LICENSE-EXCEPTION.md', 'admin-web/NOTICE.md')
+    }
+    finalizedBy 'reobfJar'
+}
