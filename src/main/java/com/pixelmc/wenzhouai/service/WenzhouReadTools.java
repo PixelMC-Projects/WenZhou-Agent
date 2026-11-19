@@ -62,6 +62,12 @@ public final class WenzhouReadTools {
                                                     id));
                                 }
                             }
+                            if ("live".equals(mode) && ("loot_sources".equals(kind) || "loot_table".equals(kind))) {
+                                return WzLoot.query(server, kind, id, page);
+                            }
+                            if ("live".equals(mode) && "food_effects".equals(kind) && page == 1) {
+                                return CompletableFuture.completedFuture(foodEffects(id));
+                            }
                             if ("live".equals(mode) && "tag".equals(kind)) {
                                 return CompletableFuture.completedFuture(tag(id, page));
                             }
@@ -129,6 +135,35 @@ public final class WenzhouReadTools {
         result.addProperty("total", matches.size());
         result.addProperty("unreadable", unreadable);
         result.add("recipe_ids", ids);
+        return result;
+    }
+
+    static JsonObject foodEffects(ResourceLocation id) {
+        var item = BuiltInRegistries.ITEM.getOptional(id);
+        if (item.isEmpty()) return message("not_registered", "该物品未注册。");
+        var stack = item.get().getDefaultInstance();
+        var food = stack.getFoodProperties(null);
+        JsonObject result = message("live", "本服默认物品栈、无特定食用者的食物属性；自定义食用代码和事件可能另有作用。");
+        result.addProperty("item", id.toString());
+        result.addProperty("has_food_properties", food != null);
+        if (food != null) {
+            result.addProperty("nutrition", food.getNutrition());
+            result.addProperty("saturation_modifier", food.getSaturationModifier());
+            result.addProperty("always_edible", food.canAlwaysEat());
+            JsonArray effects = new JsonArray();
+            for (var pair : food.getEffects()) {
+                var effect = pair.getFirst();
+                if (effect == null) continue;
+                JsonObject row = new JsonObject();
+                row.addProperty("effect", BuiltInRegistries.MOB_EFFECT.getKey(effect.getEffect()).toString());
+                row.addProperty("level", effect.getAmplifier() + 1);
+                row.addProperty("duration_ticks", effect.getDuration());
+                row.addProperty("infinite", effect.isInfiniteDuration());
+                row.addProperty("chance", pair.getSecond());
+                effects.add(row);
+            }
+            result.add("effects", effects);
+        }
         return result;
     }
 

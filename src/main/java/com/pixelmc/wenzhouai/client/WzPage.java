@@ -69,6 +69,11 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     private final HubWenzhouAnswer answer = new HubWenzhouAnswer();
     private final WzUsage.Cache usageCache = new WzUsage.Cache();
     private final HubTextEditor input = new HubTextEditor(true, 1200);
+    private final WzInlineItems references = new WzInlineItems();
+    private final WzItemSearch picker = new WzItemSearch();
+    private float pickerY;
+    private static final float SEARCH_H = 41, ROW_H = 42;
+
     private HubTextEditor wrapper = new HubTextEditor(true, 65536);
     private HubDraw draw;
     private final Map<WzConversation.Turn, TurnLayout> turnLayouts = new IdentityHashMap<>();
@@ -145,6 +150,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     void synchronizeAccess() {
         if (displayedEpoch != model.epoch()) {
             displayedEpoch = model.epoch();
+            references.clear();
+            picker.open = false;
             input.setText("");
             answer.reset();
             usageCache.clear();
@@ -208,6 +215,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     }
 
     public void leave() {
+        picker.open = false;
         active = history = reviewing = usageOpen = usageDismissed = quotaOpen = quotaDismissed = drawItems = railDrag = false;
         closedAt = 0;
         confirm = null;
@@ -278,6 +286,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
             focus = INPUT;
             wantFocus = false;
         }
+        references.beginFrame();
+        if (protocol || history || waiting() != null) picker.open = false;
         answer.beginFrame();
         drawItems = false;
         boolean literal = d.literalColors(true);
@@ -388,10 +398,10 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         WzUsage usage = usageCache.get(model.turns);
         String cost = usage.displayCost();
         float costX = END - 62 - (width(cost, 12) + 4);
-        editorX = X + 21;
+        editorX = X + 87;
         editorW = costX - editorX - 12;
         HubDraw renderer = draw;
-        HubTextEditor.Measurer measure = value -> renderer.textWidth(value, 15, false);
+        HubTextEditor.Measurer measure = value -> references.line(renderer, value, 15, 0, 0, 0, false, 0, 0);
         input.layout(measure, editorW, Math.max(28, editorH), 22.5f);
         editorH = clamp(input.contentHeight() + 6, 28, 96);
         input.layout(measure, editorW, editorH, 22.5f);
@@ -447,7 +457,63 @@ public final class WzPage implements HubWenzhouAgreement.Host {
             clipTop = 0;
             clipBottom = 850;
         }
+        if (picker.open) references.beginFrame();
         drawComposer(usage, cost, costX);
+        if (picker.open) drawPicker();
+    }
+
+    private void openPicker() {
+        picker.show();
+        host.wenzhouFocus(INPUT);
+    }
+
+    private void closePicker() {
+        picker.open = false;
+        host.wenzhouFocus(INPUT);
+    }
+
+    private void insertItem(int row) {
+        WzItemSearch.Entry item = picker.at(row);
+        if (item == null) return;
+        input.insert(references.token(item.id()));
+        closePicker();
+    }
+
+    private void drawPicker() {
+        picker.refresh();
+        float h = SEARCH_H + WzItemSearch.ROWS * ROW_H + 8;
+        pickerY = dockY - h - 8;
+
+        draw.roundRect(X, pickerY, W, h, 15, solidPaper);
+        draw.strokeRoundRect(X + .5f, pickerY + .5f, W - 1, h - 1, 15, 1, rule);
+        HubTextEditor query = picker.query;
+        query.layout(value -> width(value, 15), W - 35, 25, 22);
+        float qx = X + 16;
+        draw.save();
+        draw.clipRoundRect(qx, pickerY + 6, W - 35, 30, 0);
+        for (var rect : query.selectionRects())
+            draw.rect(qx + rect.x(), pickerY + 9, rect.width(), 20, 0x509685e8);
+        draw.text(query.text().isEmpty() ? "搜索物品名称、拼音或 ID" : query.text(),
+                qx - query.scrollX(), pickerY + 26, 15, query.text().isEmpty() ? muted : ink, false);
+        if (reduced || now / 500_000_000L % 2 == 0)
+            draw.rect(qx + query.caretRect().x(), pickerY + 11, 1, 18, ink);
+        draw.restore();
+        draw.rect(X + 1, pickerY + SEARCH_H, W - 2, 1, rule);
+        if (picker.at(0) == null)
+            draw.text(picker.loading() ? "正在索引物品…" : "没有匹配的物品", qx, pickerY + 72, 14, muted, false);
+        for (int i = 0; i < WzItemSearch.ROWS; i++) {
+            int index = picker.first + i;
+            WzItemSearch.Entry item = picker.at(index);
+            if (item == null) break;
+            float y = pickerY + SEARCH_H + 4 + i * ROW_H;
+            if (index == picker.selected || inside(X + 4, y, W - 8, ROW_H))
+                draw.roundRect(X + 4, y, W - 8, ROW_H, 8, alpha(blue, .13f));
+            references.icon(item.item().getDefaultInstance(), X + 15, y + 7, 27, X + 42, y, y + ROW_H);
+            draw.text(ellipsis(item.name(), W - 240, 14), X + 54, y + 17, 14, ink, true);
+            draw.text(ellipsis(item.id().toString(), W - 240, 12), X + 54, y + 33, 12, muted, false);
+            String mod = ellipsis(item.mod(), 166, 12);
+            draw.text(mod, END - 16 - width(mod, 12), y + 24, 12, muted, false);
+        }
     }
 
     private void drawLanding() {
@@ -523,12 +589,15 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     }
 
     private TurnLayout measureQuestion(WzConversation.Turn turn) {
+        String display = references.decode(turn.question);
         float longest = 0;
-        for (String line : turn.question.split("\n", -1))
-            longest = Math.max(longest, width(line, 14));
+        for (String line : display.split("\n", -1))
+            longest = Math.max(longest, references.line(draw, line, 14, 0, 0, 0, false, 0, 0));
         float questionWidth = clamp(longest, 1, W * .85f - 32);
-        return new TurnLayout(
-                lines(turn.question, questionWidth, 14, 21.7f), questionWidth, turn.open);
+        HubTextEditor bubble = new HubTextEditor(true, 65536);
+        bubble.layout(value -> references.line(draw, value, 14, 0, 0, 0, false, 0, 0), questionWidth, 21.7f);
+        bubble.setText(display);
+        return new TurnLayout(bubble.lines(), questionWidth, turn.open);
     }
 
     private static float bubbleHeight(TurnLayout layout) {
@@ -589,13 +658,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
             float w = layout.questionWidth + 32;
             questionCard(x, bubbleY, w, questionHeight, progress);
             for (HubTextEditor.Line line : layout.question)
-                draw.text(
-                        line.text(),
-                        x + 16,
-                        bubbleY + line.y() + 26,
-                        14,
-                        alpha(ink, progress),
-                        false);
+                references.line(draw, line.text(), 14, x + 16, bubbleY + line.y() + 26,
+                        alpha(ink, progress), true, clipTop, clipBottom);
         }
         y += questionHeight + 22;
         if (y + 18 > clipTop && y < clipBottom) {
@@ -750,6 +814,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         } else {
             draw.strokeRoundRect(X + .5f, dockY + .5f, W - 1, h - 1, 20.5f, 1, rule);
         }
+        button("wz-pick", "物品", "item", X + 6, mid - 17, 70, 34,
+                waiting ? null : () -> { if (picker.open) closePicker(); else openPicker(); }, false);
         editorY = mid - editorH / 2;
         draw.save();
         draw.clipRoundRect(editorX, editorY, editorW, editorH, 0);
@@ -766,13 +832,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
                             rect.height(),
                             0x509685e8);
             for (HubTextEditor.Line line : input.lines())
-                draw.text(
-                        line.text(),
-                        editorX - input.scrollX(),
-                        editorY + line.y() - input.scrollY() + 17,
-                        15,
-                        ink,
-                        false);
+                references.line(draw, line.text(), 15, editorX - input.scrollX(),
+                        editorY + line.y() - input.scrollY() + 17, ink, true, editorY, editorY + editorH);
         }
         if (INPUT.equals(focus) && !waiting && (reduced || now / 500_000_000L % 2 == 0)) {
             HubTextEditor.Rect caret = input.caretRect();
@@ -1143,7 +1204,11 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     }
 
     private void send(String text) {
-        String question = text.strip();
+        String question = references.encode(text).strip();
+        if (question.length() > 1500) {
+            host.feedback("包含物品 ID 后问题超过 1500 字，请缩短后再发送。");
+            return;
+        }
         if (model.quota.exhausted()) {
             host.feedback("本周额度已用完，可在输入栏左侧查看额度状态。");
             return;
@@ -1164,6 +1229,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     private void choose(String id) {
         if (model.writing) return;
         model.choose(id);
+        picker.open = false;
         history = false;
         confirm = null;
         input.setText("");
@@ -1173,6 +1239,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     }
 
     private void toggleHistory() {
+        picker.open = false;
         history = !history;
         scroll = maxScroll = 0;
         confirm = null;
@@ -1183,6 +1250,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     }
 
     private void back() {
+        picker.open = false;
         if (reviewing) close();
         else {
             switchRoute(false, System.nanoTime());
@@ -1195,6 +1263,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
 
     public boolean escape() {
         if (!active) return false;
+        if (picker.open) { closePicker(); return true; }
         if (showAgreement() && agreement.escape()) return true;
         if (answer.escape()) return true;
         if (quotaOpen) {
@@ -1217,6 +1286,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
 
     public boolean scroll(float x, float y, double amount) {
         float[] point = local(x, y);
+        if (picker.open) { picker.move((int) -Math.signum(amount)); return true; }
         if (showAgreement()) return agreement.scroll(point[0], point[1], amount);
         if (point[0] < 0 || point[0] >= 1260 || point[1] < TOP || point[1] >= 850) return false;
         if (textPointer(x, y)) {
@@ -1236,6 +1306,19 @@ public final class WzPage implements HubWenzhouAgreement.Host {
 
     public boolean pointerDown(float x, float y, boolean shift) {
         float[] p = local(x, y);
+        if (picker.open) {
+            if (p[0] >= X && p[0] < END && p[1] >= pickerY && p[1] < dockY - 8) {
+                float rowY = p[1] - pickerY - SEARCH_H - 4;
+                if (rowY >= 0 && rowY < WzItemSearch.ROWS * ROW_H) insertItem(picker.first + (int)(rowY / ROW_H));
+                else {
+                    picker.query.pointerDown(p[0] - X - 16, 0, shift);
+                    picker.query.pointerUp();
+                }
+                return true;
+            }
+            closePicker();
+            if (p[1] >= dockY && p[1] < dockY + composerHeight() && p[0] >= X && p[0] < editorX) return true;
+        }
         if (showAgreement()) return agreement.pointerDown(p[0], p[1]);
         if (!history) answer.dismissOutside(p[0], p[1]);
         if (railH > 0
@@ -1300,6 +1383,23 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     public boolean key(int key, int mods, String focused) {
         if (!active) return false;
         boolean editing = textFocused(focused);
+        if (picker.open && editing) {
+            int delta = switch (key) {
+                case GLFW.GLFW_KEY_UP -> -1;
+                case GLFW.GLFW_KEY_DOWN -> 1;
+                case GLFW.GLFW_KEY_PAGE_UP -> -WzItemSearch.ROWS;
+                case GLFW.GLFW_KEY_PAGE_DOWN -> WzItemSearch.ROWS;
+                default -> 0;
+            };
+            if (delta != 0) { picker.move(delta); return true; }
+            if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
+                picker.refresh();
+                insertItem(picker.selected);
+                return true;
+            }
+            if (key == GLFW.GLFW_KEY_ESCAPE) { closePicker(); return true; }
+        }
+        HubTextEditor editor = picker.open ? picker.query : input;
         double steps = switch (key) {
             case GLFW.GLFW_KEY_PAGE_UP -> 10;
             case GLFW.GLFW_KEY_PAGE_DOWN -> -10;
@@ -1320,16 +1420,16 @@ public final class WzPage implements HubWenzhouAgreement.Host {
                 if (shift) input.insert("\n");
                 else send(input.text());
             }
-            case GLFW.GLFW_KEY_BACKSPACE -> input.backspace(ctrl);
-            case GLFW.GLFW_KEY_DELETE -> input.deleteForward(ctrl);
-            case GLFW.GLFW_KEY_LEFT -> input.moveLeft(ctrl, shift);
-            case GLFW.GLFW_KEY_RIGHT -> input.moveRight(ctrl, shift);
-            case GLFW.GLFW_KEY_HOME -> input.moveHome(ctrl, shift);
-            case GLFW.GLFW_KEY_END -> input.moveEnd(ctrl, shift);
-            case GLFW.GLFW_KEY_UP -> input.moveVertical(-1, shift);
-            case GLFW.GLFW_KEY_DOWN -> input.moveVertical(1, shift);
+            case GLFW.GLFW_KEY_BACKSPACE -> editor.backspace(ctrl);
+            case GLFW.GLFW_KEY_DELETE -> editor.deleteForward(ctrl);
+            case GLFW.GLFW_KEY_LEFT -> editor.moveLeft(ctrl, shift);
+            case GLFW.GLFW_KEY_RIGHT -> editor.moveRight(ctrl, shift);
+            case GLFW.GLFW_KEY_HOME -> editor.moveHome(ctrl, shift);
+            case GLFW.GLFW_KEY_END -> editor.moveEnd(ctrl, shift);
+            case GLFW.GLFW_KEY_UP -> editor.moveVertical(-1, shift);
+            case GLFW.GLFW_KEY_DOWN -> editor.moveVertical(1, shift);
             case GLFW.GLFW_KEY_A -> {
-                if (ctrl) input.selectAll();
+                if (ctrl) editor.selectAll();
                 else return false;
             }
             case GLFW.GLFW_KEY_SPACE -> {
@@ -1339,29 +1439,38 @@ public final class WzPage implements HubWenzhouAgreement.Host {
                 return false;
             }
         }
+        if (picker.open && (key == GLFW.GLFW_KEY_BACKSPACE || key == GLFW.GLFW_KEY_DELETE)) picker.changed();
         return true;
     }
 
     public void type(char c, int mods) {
-        if ((mods & (GLFW.GLFW_MOD_CONTROL | GLFW.GLFW_MOD_ALT)) == 0) input.type(c);
+        if ((mods & (GLFW.GLFW_MOD_CONTROL | GLFW.GLFW_MOD_ALT)) != 0) return;
+        if (picker.open) { picker.query.type(c); picker.changed(); }
+        else if (c == '@') openPicker();
+        else input.type(c);
     }
 
     public void paste(String value) {
-        input.insert(value);
+        if (picker.open) { picker.query.insert(value); picker.changed(); }
+        else input.insert(references.decode(value));
     }
 
     public String selection() {
-        return input.selectedText();
+        return picker.open ? picker.query.selectedText() : references.encode(input.selectedText());
     }
 
     public String cut() {
-        return input.cutSelection();
+        if (picker.open) { picker.changed(); return picker.query.cutSelection(); }
+        return references.encode(input.cutSelection());
     }
 
     public void paintItems(
             GuiGraphics graphics, float ox, float oy, float sx, float sy, int mx, int my) {
-        if (!active || !drawItems) return;
+        if (!active || showAgreement() || history) return;
         float[] m = transform.getMat();
+        if (!usageOpen && !quotaOpen && guideAlpha(now, reduced) >= 1)
+            references.paint(graphics, ox + sx * m[2], oy + sy * m[5], sx * m[0], sy * m[4], mx, my);
+        if (!drawItems || picker.open) return;
         answer.paintItems(
                 graphics,
                 ox + sx * m[2],

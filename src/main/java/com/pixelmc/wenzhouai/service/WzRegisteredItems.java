@@ -34,9 +34,14 @@ final class WzRegisteredItems {
         if (previous != null && !previous.isCompletedExceptionally()) return previous;
         var index = server.submit(WzRegisteredItems::snapshot).thenApplyAsync(rows -> {
             List<Path> roots = new ArrayList<>();
+            var vanilla = WzVanillaLanguage.assets(FMLPaths.CONFIGDIR.get()
+                    .resolve("wenzhouai/lang-cache/1.20.1/assets"));
+            vanilla.ifPresent(roots::add);
             ModList.get().getModFiles().forEach(file -> roots.add(file.getFile().findResource("assets")));
             roots.add(FMLPaths.GAMEDIR.get().resolve("kubejs/assets"));
-            return from(rows, roots);
+            Catalog catalog = from(rows, roots);
+            return vanilla.isPresent() ? catalog
+                    : new Catalog(catalog.index(), catalog.unreadableLanguageFiles() + 1);
         }, Util.ioPool());
         CACHE.put(resources, index);
         return index;

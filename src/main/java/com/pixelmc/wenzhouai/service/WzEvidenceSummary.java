@@ -32,6 +32,9 @@ record WzEvidenceSummary(String outcome, String detail) {
                                                 + (number(result, "unreadable") > 0
                                                         ? " · 部分动态产出未核实"
                                                         : ""));
+                        case "food_effects" -> new WzEvidenceSummary("已读取", "本服默认物品栈的食用属性");
+                        case "loot_sources" -> new WzEvidenceSummary("已查阅", "战利品候选表 · " + number(result, "total") + " 张");
+                        case "loot_table" -> new WzEvidenceSummary("已读取", "本服战利品表定义 · 第 " + number(result, "page") + " 页");
                         case "tag" ->
                                 new WzEvidenceSummary(
                                         "已核对",

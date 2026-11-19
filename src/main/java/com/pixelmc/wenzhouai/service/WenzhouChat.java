@@ -27,6 +27,9 @@ final class WenzhouChat {
             对玩法事实只陈述已核实的内容。给出操作步骤前，核对玩家从什么物品或状态开始、用什么对什么操作、会得到什么。只有证据规定操作顺序时才声称有先后要求。
             进度提示、物品名、方法名和回拼配方都可以提供线索，不能单独证明实际操作。如果关键步骤还有可查的线索，继续查决定该行为的配方、脚本或实现；若现有资料确实无法确认，明确写明缺哪一步，只列可确认的部分，绝不把推测写成步骤。随包默认行为与本服实际生效状态须按证据说明。
             当前配方用于确认材料、工序、中间件和产物；partial 会附上 recipe-json 证据。查不到固定产物或只查到拆分、回拼时，继续查原材料、机器或方块交互，直到找到玩家可以从头操作的获取方式。
+            玩家问题中的 [[item:命名空间:路径]] 表示玩家从游戏中选定的物品。查询时直接使用括号里的完整注册 ID，保留引用顺序；同名物品不要互换。向玩家回答时使用物品名称和已有的物品引用格式。
+            当前游戏为 Java Edition 1.20.1 / Forge。询问食用效果时，先按 ID 查 food_effects，使用返回的等级、时长和概率；不要套用新版物品组件，也不要由配方推断效果。若中文名查不到，可用已知的英文名称或注册 ID 重新核对。
+            询问箱子、怪物、钓鱼或以物易物的产出时，用 loot_sources 按物品反查，再用 loot_table 按表 ID 核对池、分支条件和数量。需要时追读嵌套表。权重不是掉率，未核对触发条件不能说必掉。表中查不到时仍可能有模组事件、全局掉落修饰器或交互来源。
             遇到机器设置、自动化或特殊交互，先分清规则来自配方、机器设置还是外部设备。若游戏数据不足，使用当前可用的文件查阅工具读直接决定行为的方法体。
             方法列表用于定位。已找到关键方法就先读实现，独立的相关方法可以同轮查询。只在结论仍取决于别处时追查菜单或父类。证据够回答原问题就停止。
             回答管道接法时，分别核对从哪面向哪个槽送料、从哪面取成品。共用库存仍可能限制插入和抽出。开关或转向会改变接法时，按条件说明。
@@ -513,7 +516,7 @@ final class WenzhouChat {
             return error("参数格式无效。");
         }
         String kind = string(args, "kind");
-        if (!Set.of("recipes_for_item", "recipe", "tag", "recipe_origin").contains(kind))
+        if (!Set.of("recipes_for_item", "recipe", "tag", "recipe_origin", "food_effects", "loot_sources", "loot_table").contains(kind))
             return error("没有这个查询。");
         if (id.length() > 240 || page < 1) return error("资源 ID 或页码无效。");
         JsonObject result =
@@ -556,9 +559,9 @@ final class WenzhouChat {
         return JsonParser.parseString(
                         """
                 [{"type":"function","function":{"name":"query_game",
-                "description":"读取正在游玩的世界。recipes_for_item 按产物查候选配方 ID；recipe 按配方 ID 读当前材料、数量和工序；recipe_origin 核对是否魔改；tag 查看物品标签。未适配工序可能返回 partial。",
+                "description":"读取正在游玩的世界。recipes_for_item 按产物查候选配方 ID；recipe 按配方 ID 读当前材料、数量和工序；recipe_origin 核对是否魔改；tag 查看物品标签；food_effects 读取默认物品栈食用效果；loot_sources 按物品 ID 反查战利品表；loot_table 按表 ID 分页读生效定义。未适配工序可能返回 partial。",
                 "parameters":{"type":"object","properties":{
-                "kind":{"type":"string","enum":["recipes_for_item","recipe","recipe_origin","tag"]},
+                "kind":{"type":"string","enum":["recipes_for_item","recipe","recipe_origin","tag","food_effects","loot_sources","loot_table"]},
                 "id":{"type":"string","description":"完整资源标识，例如 minecraft:torch"},
                 "page":{"type":"integer","minimum":1,"description":"标签或产物查询的页码，默认 1"}},
                 "required":["kind","id"],"additionalProperties":false}}},

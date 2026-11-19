@@ -878,6 +878,9 @@ public final class WzService {
                                                 case "recipe" -> "当前配方";
                                                 case "recipes_for_item" -> "产物配方";
                                                 case "tag" -> "物品标签";
+                                                case "food_effects" -> "食用效果「" + target + "」";
+                                                case "loot_sources" -> "掉落来源「" + target + "」";
+                                                case "loot_table" -> "战利品表「" + target + "」";
                                                 default -> "模组玩法资料";
                                             };
                                     if ("recipes_for_item".equals(kind)) {
@@ -889,7 +892,7 @@ public final class WzService {
                                             switch (kind) {
                                                 case "recipe", "recipes_for_item" -> "bench";
                                                 case "calculate" -> "calculator";
-                                                case "find_item", "tag" -> "book";
+                                                case "find_item", "tag", "food_effects", "loot_sources", "loot_table" -> "book";
                                                 default -> "command";
                                             };
                                     boolean command = kind.equals("command");

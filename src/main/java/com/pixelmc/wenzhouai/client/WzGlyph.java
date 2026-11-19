@@ -43,6 +43,7 @@ final class WzGlyph {
     static void draw(HubDraw draw, String name, float x, float y, float size, int color) {
         String data =
                 switch (name) {
+                    case "item" -> "M12 2.8l8.4 4.7v9L12 21.2l-8.4-4.7v-9zM3.6 7.5L12 12l8.4-4.5M12 12v9.2";
                     case "boat" ->
                             "M2 12.5l9.7 1.9L22 8.9l-3.4 9.3-10.8 1.2ZM5.9 13.2l6.4-9.1 4.6 7.3m-4.6-7.3-.6 10.3";
                     case "barrel" ->
