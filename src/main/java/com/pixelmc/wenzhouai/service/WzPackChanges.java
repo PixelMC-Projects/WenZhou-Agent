@@ -40,6 +40,7 @@ final class WzPackChanges {
         final ResourceLocation target;
         final Set<String> tags;
         final Pattern ids = Pattern.compile("#?[a-z0-9_.-]+:[a-z0-9_./-]+");
+        final Pattern tableCall = Pattern.compile("\\.addLootTableModifier\\(\\s*['\"]([a-z0-9_.-]+:[a-z0-9_./-]+)['\"]");
         final List<JsonObject> matches = new ArrayList<>();
         int unreadable;
 
@@ -55,7 +56,7 @@ final class WzPackChanges {
             }
             return via;
         }
-        void add(String source, String path, String evidence, String via, int line) {
+        JsonObject add(String source, String path, String evidence, String via, int line) {
             var row = new JsonObject();
             row.addProperty("origin", source);
             row.addProperty("path", path);
@@ -63,6 +64,7 @@ final class WzPackChanges {
             row.addProperty("match", via);
             if (line > 0) row.addProperty("line", line);
             matches.add(row);
+            return row;
         }
 
         void resources(ResourceManager manager) {
@@ -121,15 +123,32 @@ final class WzPackChanges {
                                 byte[] bytes = in.readNBytes(MAX_BYTES + 1);
                                 if (bytes.length > MAX_BYTES) { unreadable++; continue; }
                                 String script = new String(bytes, StandardCharsets.UTF_8);
+                                String source = zen ? "CraftTweaker" : script.contains("LootJS.") ? "LootJS" : "KubeJS";
+                                String path = folder + "/" + root.relativize(file).toString().replace('\\','/');
+                                JsonArray tables = null;
                                 int line = 0;
                                 for (String text : script.lines().toList()) {
                                     line++;
-                                    String via = match(text);
-                                    if (via.isEmpty()) continue;
-                                    String source = zen ? "CraftTweaker" : script.contains("LootJS.") ? "LootJS" : "KubeJS";
-                                    add(source, folder + "/" + root.relativize(file).toString().replace('\\','/'),
-                                            "脚本文本引用；条件、动态修改和执行情况须另行核对", via, line);
-                                    break;
+                                    if (text.startsWith("LootJS.modifiers(")) tables = new JsonArray();
+                                    if (tables != null) {
+                                        var calls = tableCall.matcher(text);
+                                        while (calls.find() && tables.size() < 4) {
+                                            var table = new JsonPrimitive(calls.group(1));
+                                            if (!tables.contains(table)) tables.add(table);
+                                        }
+                                    }
+                                    // Keep original column offsets while recognizing Zen bracket handlers.
+                                    String searchable = zen ? text.replace("<item:", " ".repeat(6))
+                                            .replace("<tag:items:", " ".repeat(10) + "#") : text;
+                                    var tokens = ids.matcher(searchable);
+                                    while (tokens.find()) {
+                                        String via = tokens.group();
+                                        if (!via.equals(target.toString()) && !tags.contains(via)) continue;
+                                        var row = add(source,path,"脚本位置；同段表名是定位线索，执行条件另查",via,line);
+                                        row.addProperty("column",tokens.start()+1);
+                                        if (tables != null) row.add("nearby_tables",tables);
+                                    }
+                                    if (text.startsWith("})")) tables = null;
                                 }
                             } catch (IOException failure) { unreadable++; }
                         }
@@ -140,13 +159,18 @@ final class WzPackChanges {
         JsonObject page(int page) {
             matches.sort(Comparator.comparing((JsonObject row) -> !row.get("match").getAsString().equals(target.toString()))
                     .thenComparing(row -> row.get("path").getAsString()));
-            var result = WenzhouReadTools.message("pack_changes","每个脚本文件或数据资源层计一项。零项只表示在已检查范围未发现显式引用，无法排除通配符或动态脚本。");
+            var result = WenzhouReadTools.message("pack_changes","counts 按文件或资源层去重，occurrences 按匹配位置计数。未命中不能排除动态脚本。");
             var counts = new JsonObject();
+            var occurrences = new JsonObject();
+            var paths = new HashSet<List<String>>();
             for (var row : matches) {
                 var source = row.get("origin").getAsString();
-                counts.addProperty(source, WzData.number(counts,source) + 1);
+                if (paths.add(List.of(source,row.get("path").getAsString())))
+                    counts.addProperty(source, WzData.number(counts,source) + 1);
+                occurrences.addProperty(source,WzData.number(occurrences,source)+1);
             }
             result.add("counts", counts);
+            result.add("occurrences",occurrences);
             result.addProperty("total", matches.size());
             result.addProperty("unreadable", unreadable);
             result.addProperty("page",page);
@@ -159,7 +183,10 @@ final class WzPackChanges {
     static String caption(JsonObject result) {
         var parts = new StringJoiner(" · ");
         var counts = result.getAsJsonObject("counts");
-        for (String group : GROUPS) if (counts.has(group)) parts.add(group + " " + counts.get(group).getAsInt() + " 项");
+        var occurrences = result.getAsJsonObject("occurrences");
+        for (String group : GROUPS) if (counts.has(group)) {
+            parts.add(group + " " + counts.get(group).getAsInt() + " 个文件 · " + occurrences.get(group).getAsInt() + " 处匹配");
+        }
         if (parts.length() == 0) parts.add("未找到对应项");
         if (WzData.number(result,"unreadable") > 0) parts.add("部分资料未读");
         return parts.toString();

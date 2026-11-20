@@ -42,8 +42,8 @@ final class WenzhouCommands {
                         return thread;
                     });
 
-    static CompletableFuture<JsonObject> locate(String target, int page) {
-        return WzGameplayLocator.query(target, page, WORKER);
+    static CompletableFuture<JsonObject> locate(String target, int page, boolean interactions) {
+        return WzGameplayLocator.query(target, page, WORKER, interactions);
     }
 
     static CompletableFuture<JsonObject> method(String target, int page, String options) {

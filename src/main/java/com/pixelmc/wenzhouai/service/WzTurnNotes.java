@@ -177,10 +177,16 @@ final class WzTurnNotes {
                 case "save_memory" -> save(scope, args);
                 default -> WzGameplayMemory.error("未知记忆操作。");
             };
-        } catch (ExecutionException | TimeoutException unavailable) {
+        } catch (TimeoutException timeout) {
+            var result = WzGameplayMemory.error("等待 Manager 确认整合包档案超时。");
+            result.addProperty("time_limit_reached", true);
+            return result;
+        } catch (ExecutionException unavailable) {
             return WzGameplayMemory.error("Manager 暂未提供当前档案，可继续查询游戏。");
-        } catch (java.io.IOException | RuntimeException invalid) {
-            return WzGameplayMemory.error("笔记参数或存储不可用，可继续查询游戏。");
+        } catch (java.io.IOException unavailable) {
+            return WzGameplayMemory.error("记忆文件读写失败，可继续查询游戏。");
+        } catch (RuntimeException invalid) {
+            return WzGameplayMemory.error("记忆参数或已有记录格式无效，可继续查询游戏。");
         }
     }
 
@@ -201,17 +207,35 @@ final class WzTurnNotes {
     }
 
     private JsonObject save(WzGameplayMemory.Scope scope, JsonObject args) throws java.io.IOException {
+        for (String field : List.of("subject","facet","summary","detail")) {
+            if (!args.has(field) || !args.get(field).isJsonPrimitive() || !args.getAsJsonPrimitive(field).isString())
+                return WzGameplayMemory.invalid(field,"需要字符串。");
+        }
         String topic = string(args, "subject");
         if (!subjects.contains(topic)) topic = "item/" + topic;
-        if (!subjects.contains(topic)) return WzGameplayMemory.error("主题必须是本轮已核对的物品或资源 ID。");
+        if (!subjects.contains(topic)) return WzGameplayMemory.invalid("subject","主题必须是本轮已核对的物品或资源 ID。");
+        for (String field : List.of("sources","keywords"))
+            if (!args.has(field) || !args.get(field).isJsonArray()) return WzGameplayMemory.invalid(field,"需要数组。");
+        int size=args.getAsJsonArray("sources").size();
+        if (size==0 || size>6) return WzGameplayMemory.invalid("sources","收到 "+size+" 个编号，需要 1–6 个。");
         var refs = new LinkedHashSet<String>();
         for (var value : args.getAsJsonArray("sources")) {
-            int index = value.getAsBigDecimal().intValueExact() - 1;
-            if (index < 0 || index >= sources.size()) return WzGameplayMemory.error("请引用本轮回执上的 source 编号。");
+            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
+                return WzGameplayMemory.invalid("sources","需要整数编号。");
+            int index;
+            try { index = value.getAsBigDecimal().intValueExact() - 1; }
+            catch (ArithmeticException invalid) { return WzGameplayMemory.invalid("sources","编号必须是有效整数。"); }
+            if (index < 0 || index >= sources.size()) return WzGameplayMemory.invalid("sources","编号 "+value+" 未在本轮提供，可用来源数 "+sources.size()+"。");
             refs.add(sources.get(index));
         }
+        var keywords = new ArrayList<String>();
+        for (var word : args.getAsJsonArray("keywords")) {
+            if (!word.isJsonPrimitive() || !word.getAsJsonPrimitive().isString())
+                return WzGameplayMemory.invalid("keywords["+keywords.size()+"]","需要字符串。");
+            keywords.add(word.getAsString().strip());
+        }
         return memory.save(scope, topic, string(args, "facet"), string(args, "summary"), string(args, "detail"),
-                strings(args, "keywords"), List.copyOf(refs));
+                keywords, List.copyOf(refs));
     }
     private static List<String> strings(JsonObject args, String key) {
         var values = new ArrayList<String>();

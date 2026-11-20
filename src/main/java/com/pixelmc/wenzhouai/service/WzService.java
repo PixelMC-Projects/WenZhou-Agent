@@ -940,7 +940,7 @@ public final class WzService {
                                     return evidence;
                                 },
                                 usage,
-                                !confirmed && !context.isEmpty(), true);
+                                !confirmed && !context.isEmpty(), true, new WzDiagnostics(conversation, requestId));
             } catch (WenzhouChat.TopicConfirmation requested) {
                 topic = true;
             } catch (InterruptedException cancelled) {

@@ -18,7 +18,7 @@ final class WzGameplayLocator {
     private static final Map<List<Object>, List<Hit>> cache = new LinkedHashMap<>(16, .75f, true);
     private static final int PAGE_SIZE = 5;
 
-    static CompletableFuture<JsonObject> query(String target, int page, Executor worker) {
+    static CompletableFuture<JsonObject> query(String target, int page, Executor worker, boolean interactions) {
         String[] parts = target.split(":", -1);
         if (parts.length != 2 || !parts[0].matches("[a-z][a-z0-9_]{1,63}")
                 || !parts[1].matches("[A-Za-z0-9_.$/-]{1,180}") || page < 1)
@@ -29,7 +29,7 @@ final class WzGameplayLocator {
         try {
             return CompletableFuture.supplyAsync(() -> {
                 try {
-                    var result = locate(jar, parts[1], page);
+                    var result = interactions ? WzInteractionFinder.find(jar, parts[1], page) : locate(jar, parts[1], page);
                     String sha = WzJarFingerprint.of(jar);
                     if (result.has("methods")) for (var entry : result.getAsJsonArray("methods")) {
                         var row = entry.getAsJsonObject();

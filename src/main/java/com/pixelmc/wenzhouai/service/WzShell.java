@@ -87,8 +87,11 @@ final class WzShell {
             }
             boolean truncated = bytes.length > OUTPUT_LIMIT;
             if (truncated && child.isAlive()) child.destroyForcibly();
-            if (!child.waitFor(2, TimeUnit.SECONDS))
-                return WenzhouReadTools.message("unavailable", "沙箱超时，请缩小查询范围。");
+            if (!child.waitFor(2, TimeUnit.SECONDS)) {
+                var timeout = WenzhouReadTools.message("unavailable", "沙箱超时，请缩小查询范围。");
+                timeout.addProperty("time_limit_reached", true);
+                return timeout;
+            }
             JsonObject result = WenzhouReadTools.message("sandbox_output",
                     truncated ? "已到输出上限，请用筛选或行号继续读取。" : "只读玩法资料的命令输出；请检查退出码。");
             if (!truncated && child.exitValue() == 137

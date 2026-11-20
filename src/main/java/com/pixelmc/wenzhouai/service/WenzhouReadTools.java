@@ -51,7 +51,7 @@ public final class WenzhouReadTools {
             }, net.minecraft.Util.backgroundExecutor()).exceptionally(ex -> message("unavailable", "本次物品索引未能完成；已有确切 ID 时可直接查配方。"));
         }
         if ("live".equals(mode) && "locate_gameplay".equals(kind))
-            return WenzhouCommands.locate(name, page);
+            return WenzhouCommands.locate(name, page, hints.equals("@interactions"));
         if ("live".equals(mode) && "read_method".equals(kind))
             return WenzhouCommands.method(name, page, hints);
         if ("live".equals(mode) && ("search_tags".equals(kind) || "item_tags".equals(kind)))

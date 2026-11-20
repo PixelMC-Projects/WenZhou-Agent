@@ -100,10 +100,15 @@ final class WzGameplayMemory {
 
     synchronized JsonObject save(Scope scope, String subject, String facet, String summary, String detail,
                                  List<String> keywords, List<String> sources) throws IOException {
-        if (!FACETS.contains(facet) || !subject.matches("(item|tag|recipe|loot_table)/[a-z0-9_.-]+:[a-z0-9_./-]+")
-                || !plain(summary, 48) || !plain(detail, 240) || sources.isEmpty() || sources.size() > 6
-                || keywords.size() > 6 || keywords.stream().anyMatch(word -> !plain(word, 48)))
-            return error("需要已查实的主题、一句概况、简短正文和本轮证据。");
+        if (!FACETS.contains(facet)) return invalid("facet", "请选择 obtain、uses、operation、conditions、effects 或 drops。");
+        if (!subject.matches("(item|tag|recipe|loot_table)/[a-z0-9_.-]+:[a-z0-9_./-]+"))
+            return invalid("subject","需要完整的已核实资源 ID。");
+        if (!plain(summary,48)) return invalidText("summary",summary,48);
+        if (!plain(detail,240)) return invalidText("detail",detail,240);
+        if (sources.isEmpty() || sources.size()>6) return invalid("sources","收到 "+sources.size()+" 个不同来源，需要 1–6 个。");
+        if (keywords.size()>6) return invalid("keywords","收到 "+keywords.size()+" 个关键词，最多 6 个。");
+        for (int i=0;i<keywords.size();i++) if (!plain(keywords.get(i),48))
+            return invalidText("keywords["+i+"]",keywords.get(i),48);
         Path path = file(scope);
         Map<String, JsonObject> notes = load(path);
         String id = digest(JSON.toJson(scope.parts()) + "\n" + subject + "\n" + facet).substring(0, 20);
@@ -150,6 +155,16 @@ final class WzGameplayMemory {
     static boolean plain(String text, int max) {
         return !text.isBlank() && text.length() <= max && text.chars().noneMatch(Character::isISOControl)
                 && !text.contains("[[") && !text.contains("://");
+    }
+    static JsonObject invalid(String field, String reason) {
+        var result = WenzhouReadTools.message("invalid_request",field+"："+reason);
+        result.addProperty("field",field);
+        return result;
+    }
+    static JsonObject invalidText(String field, String text, int limit) {
+        if (text.isBlank()) return invalid(field,"内容为空。");
+        if (text.length()>limit) return invalid(field,"长度 "+text.length()+"，上限 "+limit+"（UTF-16）。");
+        return invalid(field,"请使用单行纯文本，移除控制字符、物品标记或链接。");
     }
     static JsonObject error(String message) {
         return WenzhouReadTools.message("unavailable", message);
