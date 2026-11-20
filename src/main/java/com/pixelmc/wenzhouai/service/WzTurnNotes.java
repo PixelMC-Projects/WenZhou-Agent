@@ -15,6 +15,7 @@ final class WzTurnNotes {
     private final UUID player;
     private final Set<String> subjects = new LinkedHashSet<>();
     private final List<String> sources = new ArrayList<>();
+    private final Map<String, String> listedSummaries = new HashMap<>();
     private final java.util.concurrent.CompletableFuture<WzGameplayMemory.Scope> initialScope;
     private long lastScopeCheck = System.nanoTime();
 
@@ -97,8 +98,7 @@ final class WzTurnNotes {
                 lastScopeCheck = System.nanoTime();
             }
             return switch (action) {
-                case "search_memory" -> memory.search(scope, strings(args, "keywords"),
-                        args.has("page") ? args.get("page").getAsBigDecimal().intValueExact() : 1);
+                case "search_memory" -> search(scope, args);
                 case "read_memory" -> memory.read(scope, string(args, "id"));
                 case "save_memory" -> save(scope, args);
                 default -> WzGameplayMemory.error("未知记忆操作。");
@@ -108,6 +108,22 @@ final class WzTurnNotes {
         } catch (java.io.IOException | RuntimeException invalid) {
             return WzGameplayMemory.error("笔记参数或存储不可用，可继续查询游戏。");
         }
+    }
+
+    String listedSummary(String id) {
+        return listedSummaries.getOrDefault(id, "");
+    }
+
+    private JsonObject search(WzGameplayMemory.Scope scope, JsonObject args) throws java.io.IOException {
+        int page = args.has("page") ? args.get("page").getAsBigDecimal().intValueExact() : 1;
+        var result = memory.search(scope, strings(args, "keywords"), page);
+        if (result.has("matches")) {
+            for (var element : result.getAsJsonArray("matches")) {
+                var row = element.getAsJsonObject();
+                listedSummaries.put(string(row, "id"), string(row, "summary"));
+            }
+        }
+        return result;
     }
 
     private JsonObject save(WzGameplayMemory.Scope scope, JsonObject args) throws java.io.IOException {

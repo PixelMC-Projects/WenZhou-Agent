@@ -21,6 +21,7 @@ final class WzConversation {
         final String question;
         final List<Activity> activity = new ArrayList<>();
         final JsonArray receipts = new JsonArray();
+        final WzStreamingReply stream = new WzStreamingReply();
         final long since = System.nanoTime();
         JsonObject reply;
         String topic = "", topicToken = "", error = "";
@@ -38,6 +39,8 @@ final class WzConversation {
         void apply(JsonObject event) {
             String type = str(event, "type"), id = str(event, "id"), text = str(event, "text");
             switch (type) {
+                case "answer.delta" -> { if (!stopping && !stopped && reply == null) stream.append(text); }
+                case "answer.reset" -> stream.reset();
                 case "progress" -> {
                     for (int i = 0; !id.isEmpty() && i < activity.size(); i++) {
                         Activity old = activity.get(i);
@@ -579,7 +582,7 @@ final class WzConversation {
                     if (!id.isEmpty()) selected = id;
                     turn.stopped = flag(result, "stopped");
                     turn.reply = obj(result, "reply");
-                    turn.answered = System.nanoTime();
+                    turn.answered = turn.stream.started() ? 0 : System.nanoTime();
                     JsonArray activity = array(result, "events");
                     if (!activity.isEmpty()) {
                         turn.activity.clear();

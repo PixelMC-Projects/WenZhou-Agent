@@ -777,7 +777,7 @@ public final class WzService {
                 context.add(message("user", string(turn, "question")));
                 context.add(message("assistant", string(turn, "answerText")));
             }
-            var model = new WenzhouChat.TitledModel(WenzhouChat.official(key()), !WzHistory.hasGeneratedTitle(previous));
+            String apiKey = key();
             long questionTime = choice == null ? createdAt : number(choice.turn, "createdAt");
             // A generated title can describe the oldest completed turn supplied to the model.
             long titleSince = questionTime;
@@ -843,6 +843,14 @@ public final class WzService {
                                 WzNetwork.event(server, player, generation, event);
                             });
             WzReply rich = new WzReply(WenzhouReadTools::itemDisplayName);
+            var model = new WenzhouChat.TitledModel(WenzhouChat.official(apiKey, () ->
+                    new WzLiveText(rich::answerText, (type, part) -> {
+                        if (run.stopped() || session.hidden || liveFor(player, conversation, 0) != session) return;
+                        var update = event(type, part);
+                        update.addProperty("conversationId", conversation);
+                        update.addProperty("requestId", requestId);
+                        WzNetwork.event(server, player, generation, update);
+                    })), !WzHistory.hasGeneratedTitle(previous));
             WzTurnNotes notes = new WzTurnNotes(gameplayMemory, player);
             JsonArray events = new JsonArray();
             String effort = settings.reasoning();
@@ -873,40 +881,11 @@ public final class WzService {
                                     stopHidden(session);
                                     String lookupId = UUID.randomUUID().toString();
                                     boolean calculation = kind.equals("calculate");
-                                    String subject =
-                                            switch (kind) {
-                                                case "calculate" -> " · " + purpose;
-                                                case "find_item" -> "物品「" + target + "」";
-                                                case "recipe" -> "当前配方";
-                                                case "recipes_for_item" -> "产物配方";
-                                                case "tag" -> "物品标签";
-                                                case "search_tags" -> "相关物品标签";
-                                                case "item_tags" -> "物品所属标签";
-                                                case "locate_gameplay" -> "交互方法与注册引用";
-                                                case "item_overview" -> "引用物品与生效配方";
-                                                case "search_memory" -> "玩法笔记目录";
-                                                case "read_memory" -> "玩法笔记";
-                                                case "save_memory" -> "玩法笔记保存结果";
-                                                case "food_effects" -> "食用效果「" + target + "」";
-                                                case "loot_sources" -> "掉落来源「" + target + "」";
-                                                case "loot_table" -> "战利品表「" + target + "」";
-                                                default -> "模组玩法资料";
-                                            };
-                                    if ("recipes_for_item".equals(kind)) {
-                                        String item = WenzhouReadTools.itemDisplayName(target);
-                                        if (item != null && !item.isBlank())
-                                            subject += "「" + item + "」";
-                                    }
-                                    String icon =
-                                            switch (kind) {
-                                                case "recipe", "recipes_for_item" -> "bench";
-                                                case "calculate" -> "calculator";
-                                                case "find_item", "tag", "food_effects", "loot_sources", "loot_table",
-                                                        "search_tags", "item_tags", "item_overview", "search_memory", "read_memory", "save_memory" -> "book";
-                                                default -> "command";
-                                            };
-                                    boolean command = kind.equals("command");
-                                    String commandLabel = command ? "运行命令 · " + purpose : "";
+                                    JsonObject memoryArgs = "memory".equals(mode)
+                                            ? com.google.gson.JsonParser.parseString(target).getAsJsonObject() : null;
+                                    String summaryHint = "read_memory".equals(kind)
+                                            ? notes.listedSummary(string(memoryArgs, "id")) : "";
+                                    var activity = WzToolActivity.start(mode, kind, target, purpose, memoryArgs, summaryHint);
                                     publicEvent(
                                                 player,
                                                 generation,
@@ -914,11 +893,11 @@ public final class WzService {
                                                 conversation,
                                                 lookupId,
                                                 "tool.start",
-                                                command ? commandLabel : calculation ? "正在计算" + subject : "正在查阅" + subject,
-                                                icon,
+                                                activity.label(),
+                                                activity.icon(),
                                                 "");
                                     JsonObject evidence = "memory".equals(mode)
-                                            ? notes.execute(kind, com.google.gson.JsonParser.parseString(target).getAsJsonObject())
+                                            ? notes.execute(kind, memoryArgs)
                                             : calculation
                                             ? WzCalculator.calculate(target)
                                             : server.submit(
@@ -942,6 +921,7 @@ public final class WzService {
                                     notes.observe(kind, target, evidence);
                                     WzEvidenceSummary summary =
                                             WzEvidenceSummary.from(mode, kind, evidence);
+                                    var finished = activity.finished(kind, evidence);
                                     publicEvent(
                                                 player,
                                                 generation,
@@ -949,9 +929,9 @@ public final class WzService {
                                                 conversation,
                                                 lookupId,
                                                 "tool.finish",
-                                                command ? commandLabel : summary.outcome() + subject,
-                                                icon,
-                                                command ? summary.outcome() : summary.detail());
+                                                finished.label(),
+                                                finished.icon(),
+                                                kind.equals("command") ? summary.outcome() : summary.detail());
                                     return evidence;
                                 },
                                 usage,
@@ -975,7 +955,7 @@ public final class WzService {
                     JsonObject row = entry.getAsJsonObject();
                     if ("tool.start".equals(string(row, "type"))) {
                         publicEvent(player, generation, events, conversation, string(row, "id"),
-                                "tool.finish", "已停止查阅", string(row, "icon"), "");
+                                "tool.finish", string(row, "text"), string(row, "icon"), "已停止查阅");
                     }
                 }
                 if (thinking) publicEvent(player, generation, events, conversation, thoughtId,

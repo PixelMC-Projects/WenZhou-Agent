@@ -103,7 +103,8 @@ final class WzGameplayMemory {
         Path path = file(scope);
         Map<String, JsonObject> notes = load(path);
         String id = digest(JSON.toJson(scope.parts()) + "\n" + subject + "\n" + facet).substring(0, 20);
-        if (!notes.containsKey(id) && notes.size() >= 4096) return error("当前档案的笔记已满。");
+        boolean created = !notes.containsKey(id);
+        if (created && notes.size() >= 4096) return error("当前档案的笔记已满。");
         var note = new JsonObject();
         String now = Instant.now().toString();
         note.addProperty("id", id);
@@ -134,6 +135,7 @@ final class WzGameplayMemory {
         } finally { Files.deleteIfExists(temp); }
         JsonObject result = new JsonObject();
         result.addProperty("saved", id);
+        result.addProperty("created", created);
         return result;
     }
 

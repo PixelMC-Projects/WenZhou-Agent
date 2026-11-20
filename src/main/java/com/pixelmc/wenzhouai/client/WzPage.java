@@ -104,7 +104,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         List<HubTextEditor.Line> topic = List.of(), failure = List.of();
         List<TimelineRow> events = List.of();
         long activityRevision = Long.MIN_VALUE;
-        boolean running, answered;
+        boolean running, answered, streaming;
         float timelineHeight, start, end, disclosureHeight, replySeconds;
 
         TurnLayout(List<HubTextEditor.Line> question, float questionWidth, boolean open) {
@@ -402,8 +402,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         editorW = costX - editorX - 12;
         HubDraw renderer = draw;
         HubTextEditor.Measurer measure = value -> references.line(renderer, value, 15, 0, 0, 0, false, 0, 0);
-        input.layout(measure, editorW, Math.max(28, editorH), 22.5f);
-        editorH = clamp(input.contentHeight() + 6, 28, 96);
+        input.layout(measure, editorW, Math.max(22.5f, editorH), 22.5f);
+        editorH = clamp(input.contentHeight(), 22.5f, 90);
         input.layout(measure, editorW, editorH, 22.5f);
         float dockH = composerHeight() + 24 + (model.showProtocol ? 21.8f : 0);
         boolean empty = empty();
@@ -574,7 +574,12 @@ public final class WzPage implements HubWenzhouAgreement.Host {
             if (!layout.events.isEmpty()) offset += 42 + layout.disclosureHeight;
             if (!layout.topic.isEmpty()) offset += 55 + 24 * layout.topic.size();
             offset += 23 * layout.failure.size();
-            if (turn.reply != null) {
+            layout.streaming = (running || turn.reply != null) && !turn.stopping && !turn.stopped
+                    && turn.stream.advance(draw, W, now, reduced, turn.reply != null);
+            if (layout.streaming) {
+                offset += turn.stream.height();
+            } else if (turn.reply != null) {
+                if (turn.stream.started()) turn.stream.reset();
                 layout.replySeconds =
                         turn.answered == 0
                                 ? Float.POSITIVE_INFINITY
@@ -619,15 +624,13 @@ public final class WzPage implements HubWenzhouAgreement.Host {
                                     ? "已思考"
                                     : running ? "思考中" : turn.stopped ? "思考已结束" : "思考已中断";
                         }
-                        case "tool.start" -> running || row.text().startsWith("运行命令 · ")
-                                ? row.text() : turn.stopped ? "查询已停止" : "查询已中断";
                         default -> row.text();
                     };
             String detail = "";
             if (row.type().equals("tool.finish")
                     && (!row.icon().equals("command") || label.startsWith("运行命令 · "))) {
                 detail = row.detail();
-            } else if (!running && row.type().equals("tool.start") && label.startsWith("运行命令 · ")) {
+            } else if (!running && row.type().equals("tool.start")) {
                 detail = turn.stopped ? "查询已停止" : "查询已中断";
             }
             List<HubTextEditor.Line> labels = lines(label, W - 47, 13, 18.85f);
@@ -698,6 +701,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
                     model.busy() || model.quota.exhausted() ? null : () -> resolveTopic(true),
                     true);
             y += height;
+        } else if (layout.streaming && y < clipBottom) {
+            y += turn.stream.paint(draw, X, y, clipTop, clipBottom, ink);
         } else if (turn.reply != null && y < clipBottom) {
             y += answer.render(draw, turn.reply, X, y, W, mx, my, layout.replySeconds, reduced);
         }
@@ -795,7 +800,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
     }
 
     private float composerHeight() {
-        return Math.max(60, editorH + 22);
+        return Math.max(60, editorH + 28);
     }
 
     private void drawComposer(WzUsage usage, String cost, float costX) {
@@ -823,7 +828,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         draw.clipRoundRect(editorX, editorY, editorW, editorH, 0);
         if (input.text().isEmpty() || waiting) {
             String placeholder = model.quota.exhausted() ? "本周额度已用完" : waiting ? "请选择如何继续这次提问" : empty() ? "想在旅途中弄清什么？" : "接着问问舟…";
-            draw.text(placeholder, editorX, editorY + 19, 15, muted, false);
+            draw.text(placeholder, editorX, editorY + 17, 15, muted, false);
         } else {
             if (INPUT.equals(focus))
                 for (HubTextEditor.Rect rect : input.selectionRects())
@@ -842,7 +847,7 @@ public final class WzPage implements HubWenzhouAgreement.Host {
             draw.rect(editorX + caret.x(), editorY + caret.y() + 2, 1, caret.height() - 4, ink);
         }
         draw.restore();
-        if (!waiting) hit(INPUT, "向问舟提问", editorX, editorY, editorW, editorH, () -> {});
+        if (!waiting) hit(INPUT, "向问舟提问", editorX, editorY - 3, editorW, editorH + 6, () -> {});
         boolean onCost = inside(costX, mid - 15, costW, 30) || COST.equals(focus);
         boolean onTip = usageOpen && inside(costX + costW - 206, dockY - 191, 210, h / 2 + 201);
         if (!onCost && !onTip) usageDismissed = false;
@@ -1378,8 +1383,8 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         float[] p = local(x, y);
         return p[0] >= editorX
                 && p[0] < editorX + editorW
-                && p[1] >= editorY
-                && p[1] < editorY + editorH;
+                && p[1] >= editorY - 3
+                && p[1] < editorY + editorH + 3;
     }
 
     public boolean key(int key, int mods, String focused) {

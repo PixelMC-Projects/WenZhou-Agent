@@ -60,6 +60,16 @@ final class WzGlyph {
                             "M3 5.8c3.4-.9 6.3-.3 9 1.4 2.7-1.7 5.6-2.3 9-1.4v13c-3.2-.7-6.1-.4-9 1.2-2.9-1.6-5.8-1.9-9-1.2Zm9 1.4v12.6";
                     case "calculator" ->
                             "M6 3h12q1 0 1 1v16q0 1-1 1H6q-1 0-1-1V4q0-1 1-1ZM8 7h8M8 12h2m4 0h2m-8 4h2m4 0h2";
+                    case "tag" -> "M3 4h8l10 10-7 7L3 10ZM7 7.5h.1";
+                    case "tags" -> "M3 4h7l8 8-6 6-9-9ZM7 7h.1M20 10l2 2-9 9";
+                    case "locate" -> "M3 8V4h4m10 0h4v4m0 8v4h-4m-10 0H3v-4m6-7-3 3 3 3m6-6 3 3-3 3";
+                    case "food" -> "M4 3v5q0 3 3 3t3-3V3M7 3v18m12 0V3q-5 2-5 10h5";
+                    case "loot" -> "M3 10l2-5h14l2 5v9H3Zm0 1h7m4 0h7m-11-2h4v5h-4Z";
+                    case "memory-search" -> "M13 4H4v15h5M7 8h4m-4 4h2M18 16l3 4m-2-7a4 4 0 1 1-8 0 4 4 0 1 1 8 0Z";
+                    case "memory-read" -> "M5 3h14v18H5ZM9 3v7l2-1.5 2 1.5V3m-5 11h8m-8 3h6";
+                    case "memory-write" -> "M5 3h14v18H5ZM8 7h8m-8 4h8m-8 4h5";
+                    case "memory-add" -> "M18 9V3H4v18h7M7 7h7m-7 4h4m6 1v9m-4.5-4.5h9";
+                    case "memory-edit" -> "M17 7V3H4v18h6M7 7h6m-6 4h4m1 9 1-4 6-6 3 3-6 6Z";
                     case "command" ->
                             "M5 5h14q2 0 2 2v10q0 2-2 2H5q-2 0-2-2V7q0-2 2-2Zm2 4 3 3-3 3m6 0h4";
                     case "chevron" -> "M8.5 5.5l6.2 6.5-6.2 6.5";

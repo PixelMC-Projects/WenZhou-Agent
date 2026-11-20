@@ -265,9 +265,13 @@ final class WenzhouChat {
         }
     }
 
-    static Model official(String key) {
+    static Model official(String key, java.util.function.Supplier<WzCompletionStream.Preview> previews) {
         HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(12)).build();
         return request -> {
+            request.addProperty("stream", true);
+            var options = new JsonObject();
+            options.addProperty("include_usage", true);
+            request.add("stream_options", options);
             HttpRequest post =
                     HttpRequest.newBuilder(URI.create("https://api.deepseek.com/chat/completions"))
                             .timeout(Duration.ofSeconds(100))
@@ -277,11 +281,15 @@ final class WenzhouChat {
                             .build();
             JsonObject quote = WenzhouBilling.quote(System.currentTimeMillis());
             if (!quote.has("period")) throw new Notice("当前时段的模型价格尚未核实，请联系服主更新计价日历。");
-            HttpResponse<String> response;
+            var stream = new WzCompletionStream(previews.get());
+            var pending = http.sendAsync(post, stream::body);
+            HttpResponse<Void> response;
             try {
-                response = http.send(post, HttpResponse.BodyHandlers.ofString());
-            } catch (IOException e) {
+                response = pending.get(100, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
                 throw new Notice("连接 DeepSeek 失败或超时，请检查联网状态后重试。");
+            } finally {
+                if (!pending.isDone()) pending.cancel(true);
             }
             if (response.statusCode() != 200) {
                 String hint =
@@ -293,7 +301,7 @@ final class WenzhouChat {
                         };
                 throw new Notice("DeepSeek 返回 HTTP " + response.statusCode() + "。" + hint);
             }
-            JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
+            JsonObject body = stream.response();
             body.add("_wzQuote", quote);
             return body;
         };
