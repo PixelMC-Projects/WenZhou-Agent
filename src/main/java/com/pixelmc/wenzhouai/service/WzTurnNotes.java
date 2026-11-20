@@ -119,7 +119,23 @@ final class WzTurnNotes {
                     if (row.has("detail")) source(row, "recipe " + row.getAsJsonArray("recipe_ids").get(0).getAsString());
                 }
             }
-            case "find_item" -> subject("item", string(result, "unique_item"));
+            case "entity_spawns", "biome_tag", "machine_conversions" -> {
+                if (WzData.number(result, "total") > 0) {
+                    String type = switch (kind) {
+                        case "entity_spawns" -> "entity";
+                        case "biome_tag" -> "biome_tag";
+                        default -> "item";
+                    };
+                    subject(type, target);
+                    result.addProperty("memory_subject", type + "/" + target);
+                    source(result, kind + " " + target + " " + WzGameplayMemory.digest(result.toString()));
+                }
+            }
+            case "find_item" -> {
+                subject("item", string(result, "unique_item"));
+                if (result.has("recipe_detail")) observe("recipe", result.getAsJsonObject("fixed_output_recipes")
+                        .getAsJsonArray("recipe_ids").get(0).getAsString(), result.getAsJsonObject("recipe_detail"));
+            }
             case "tag", "food_effects", "recipe", "loot_table" -> {
                 subject(kind.equals("food_effects") ? "item" : kind, target);
                 source(result, kind + " " + target);

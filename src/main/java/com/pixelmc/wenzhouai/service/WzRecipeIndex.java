@@ -61,6 +61,13 @@ final class WzRecipeIndex {
                 for (Ingredient ingredient : recipe.getIngredients()) {
                     ingredient(inputs, ingredient, "ingredient", slot++);
                 }
+                var imbuement = WzMachineRecipes.imbuement(recipe);
+                if (imbuement != null) {
+                    output(products, imbuement.output(), "primary", null);
+                    ingredient(inputs, imbuement.input(), "chamber", 0);
+                    for (int i = 0; i < imbuement.pedestals().size(); i++)
+                        ingredient(inputs, imbuement.pedestals().get(i), "pedestal", i);
+                }
                 // Optional mod API. Its public result list preserves order, repeated items and chances.
                 if (recipe.getClass().getName().equals("vectorwing.farmersdelight.common.crafting.CuttingBoardRecipe")) {
                     Ingredient tool = (Ingredient) recipe.getClass().getMethod("getTool").invoke(recipe);

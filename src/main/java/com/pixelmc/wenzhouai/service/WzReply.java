@@ -26,9 +26,16 @@ final class WzReply {
     private static final Pattern LIST_LABEL = Pattern.compile(
             "(?:[、，,][ \\t]*|(?:^|\\n)[ \\t]*[-•][ \\t]+)([^、，,\\n\\r]{1,160}?)[ \\t]*\\z");
 
-    record ListLabel(JsonArray parts, int position, String prefix, String label, String id) {
+    private static final Pattern PAREN_ALIAS = Pattern.compile("^[ \\t]*(?:（([^（）\\r\\n]{1,160})）|\\(([^()\\r\\n]{1,160})\\))");
+
+    record ListLabel(JsonArray parts, int position, String fragment, String label, String id, boolean leading) {
         void localize(WzItemIndex index) {
-            if (index.hasDisplayName(id, label)) parts.set(position, new com.google.gson.JsonPrimitive(prefix));
+            if (!index.hasDisplayName(id, label)) return;
+            String text = parts.get(position).getAsString();
+            if (leading && text.startsWith(fragment))
+                parts.set(position, new com.google.gson.JsonPrimitive(text.substring(fragment.length())));
+            if (!leading && text.endsWith(fragment))
+                parts.set(position, new com.google.gson.JsonPrimitive(text.substring(0, text.length() - fragment.length())));
         }
     }
 
@@ -45,14 +52,20 @@ final class WzReply {
         if (!reply.has("text") || !reply.get("text").isJsonArray()) return;
         JsonArray parts = reply.getAsJsonArray("text");
         JsonObject items = object(reply, "items");
-        for (int i = 1; i < parts.size(); i++) {
-            if (!parts.get(i).isJsonObject() || !parts.get(i-1).isJsonPrimitive()) continue;
+        for (int i = 0; i < parts.size(); i++) {
+            if (!parts.get(i).isJsonObject()) continue;
             String key = string(parts.get(i).getAsJsonObject(), "item");
             String id = string(object(items, key), "id");
             if (id.isEmpty()) continue;
+            if (i + 1 < parts.size() && parts.get(i+1).isJsonPrimitive()) {
+                var after = PAREN_ALIAS.matcher(parts.get(i+1).getAsString());
+                if (after.find()) labels.add(new ListLabel(parts, i+1, after.group(),
+                        after.group(1) != null ? after.group(1) : after.group(2), id, true));
+            }
+            if (i == 0 || !parts.get(i-1).isJsonPrimitive()) continue;
             String text = parts.get(i-1).getAsString();
             var match = LIST_LABEL.matcher(text);
-            if (match.find()) labels.add(new ListLabel(parts, i-1, text.substring(0, match.start(1)), match.group(1), id));
+            if (match.find()) labels.add(new ListLabel(parts, i-1, text.substring(match.start(1)), match.group(1), id, false));
         }
     }
     private final Map<String, JsonObject> recipes = new HashMap<>();
@@ -64,6 +77,11 @@ final class WzReply {
     }
 
     void collect(String mode, String kind, String id, JsonObject evidence) {
+        if ("find_item".equals(kind) && evidence.has("recipe_detail")) {
+            collect("live", "recipe", evidence.getAsJsonObject("fixed_output_recipes")
+                    .getAsJsonArray("recipe_ids").get(0).getAsString(), evidence.getAsJsonObject("recipe_detail"));
+            return;
+        }
         if ("item_overview".equals(kind) && evidence.has("items")) {
             for (var element : evidence.getAsJsonArray("items")) {
                 var row = element.getAsJsonObject();
@@ -143,6 +161,31 @@ final class WzReply {
             displayed.add(key, model);
         }
         return key;
+    }
+
+    String unverifiedReferences(String answer) {
+        var missing = new java.util.LinkedHashSet<String>();
+        var match = REFERENCE.matcher(answer);
+        while (match.find() && missing.size() < 8) {
+            String key = match.group(2);
+            boolean verified = switch (match.group(1)) {
+                case "item" -> itemNames.apply(key) != null;
+                case "stack" -> stacks.containsKey(key);
+                default -> recipes.containsKey(key);
+            };
+            if (!verified) missing.add(match.group());
+        }
+        return String.join("、", missing);
+    }
+
+    JsonObject streamItem(String marker) {
+        var match = REFERENCE.matcher(marker);
+        if (!match.matches()) return null;
+        return switch (match.group(1)) {
+            case "item" -> item(match.group(2), "");
+            case "stack" -> stacks.get(match.group(2));
+            default -> null;
+        };
     }
 
     String answerText(String answer) {

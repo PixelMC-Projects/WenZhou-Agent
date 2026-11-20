@@ -357,6 +357,29 @@ final class WenzhouRecipes {
             return WenzhouReadTools.message("not_active", "这个配方 ID 当前未生效。");
         }
         var recipe = current.get();
+        try {
+            var imbuement = WzMachineRecipes.imbuement(recipe);
+            if (imbuement != null) {
+                JsonObject detail = new JsonObject();
+                detail.addProperty("id", id.toString());
+                detail.addProperty("serializer", serializerId(recipe));
+                detail.addProperty("machine", "ars_nouveau:imbuement_chamber");
+                detail.add("chamber_input", imbuement.input().toJson());
+                var pedestals = new JsonArray();
+                imbuement.pedestals().forEach(value -> pedestals.add(value.toJson()));
+                detail.add("pedestal_ingredients", pedestals);
+                detail.addProperty("source_cost", imbuement.source());
+                var output = displayStack(imbuement.output());
+                if (output != null && detail.toString().length() <= MAX_RESULT_CHARS / 2) {
+                    detail.add("result", output);
+                    var result = WenzhouReadTools.message("live", "从已加载的灌注配方实例读取。");
+                    result.add("recipe", detail);
+                    return result;
+                }
+            }
+        } catch (ReflectiveOperationException | RuntimeException incompatible) {
+            // Other mod versions can still use the generic recipe inspector.
+        }
         if (!SIMPLE_RECIPES.contains(recipe.getClass())) {
             var result = WenzhouReadTools.message("partial", "配方已加载。此工序的设备条件、材料和产出尚无读取适配。");
             result.addProperty("id", id.toString());

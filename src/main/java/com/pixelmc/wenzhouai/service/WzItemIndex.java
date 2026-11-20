@@ -48,7 +48,9 @@ final class WzItemIndex {
         Candidate row = byId.get(id);
         if (row == null) return false;
         Entry item = row.item();
-        return label.equals(item.displayName()) || item.chinese().contains(label) || item.english().contains(label);
+        String clean = net.minecraft.ChatFormatting.stripFormatting(label);
+        return clean.equals(item.displayName()) || item.chinese().contains(clean) || item.english().contains(clean)
+                || label.equals(item.displayName()) || item.chinese().contains(label) || item.english().contains(label);
     }
 
     JsonObject find(String query) {
@@ -114,7 +116,7 @@ final class WzItemIndex {
     }
 
     private static String normal(String value) {
-        String clean = Normalizer.normalize(value, Normalizer.Form.NFKC).strip().toLowerCase(Locale.ROOT);
+        String clean = Normalizer.normalize(net.minecraft.ChatFormatting.stripFormatting(value), Normalizer.Form.NFKC).strip().toLowerCase(Locale.ROOT);
         return SPACE.matcher(clean.replace('_', ' ')).replaceAll(" ").strip();
     }
 }

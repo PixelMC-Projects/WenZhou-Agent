@@ -101,7 +101,7 @@ final class WzGameplayMemory {
     synchronized JsonObject save(Scope scope, String subject, String facet, String summary, String detail,
                                  List<String> keywords, List<String> sources) throws IOException {
         if (!FACETS.contains(facet)) return invalid("facet", "请选择 obtain、uses、operation、conditions、effects 或 drops。");
-        if (!subject.matches("(item|tag|recipe|loot_table)/[a-z0-9_.-]+:[a-z0-9_./-]+"))
+        if (!subject.matches("(item|tag|biome_tag|entity|recipe|loot_table)/[a-z0-9_.-]+:[a-z0-9_./-]+"))
             return invalid("subject","需要完整的已核实资源 ID。");
         if (!plain(summary,48)) return invalidText("summary",summary,48);
         if (!plain(detail,240)) return invalidText("detail",detail,240);

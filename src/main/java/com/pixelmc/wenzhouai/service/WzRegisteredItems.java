@@ -39,6 +39,7 @@ final class WzRegisteredItems {
             vanilla.ifPresent(roots::add);
             ModList.get().getModFiles().forEach(file -> roots.add(file.getFile().findResource("assets")));
             roots.add(FMLPaths.GAMEDIR.get().resolve("kubejs/assets"));
+            roots.add(FMLPaths.CONFIGDIR.get().resolve("wenzhouai/pack-language/assets"));
             Catalog catalog = from(rows, roots);
             return vanilla.isPresent() ? catalog
                     : new Catalog(catalog.index(), catalog.unreadableLanguageFiles() + 1);
@@ -86,7 +87,7 @@ final class WzRegisteredItems {
         for (Row row : rows) {
             List<String> zh = chinese.getOrDefault(row.description(), List.of());
             List<String> en = english.getOrDefault(row.description(), List.of());
-            String display = !row.display().isEmpty() ? row.display() : !zh.isEmpty() ? zh.get(0)
+            String display = !zh.isEmpty() ? zh.get(0) : !row.display().isEmpty() ? net.minecraft.ChatFormatting.stripFormatting(row.display())
                     : !en.isEmpty() ? en.get(0) : row.id();
             items.add(new WzItemIndex.Entry(row.id(), row.modName(), display, zh, en));
         }
@@ -102,7 +103,7 @@ final class WzRegisteredItems {
             for (var entry : labels.entrySet()) {
                 if (!keys.contains(entry.getKey()) || !entry.getValue().isJsonPrimitive()
                         || !entry.getValue().getAsJsonPrimitive().isString()) continue;
-                String name = entry.getValue().getAsString().strip();
+                String name = net.minecraft.ChatFormatting.stripFormatting(entry.getValue().getAsString()).strip();
                 if (name.isEmpty() || name.length() > 160 || name.codePoints().anyMatch(Character::isISOControl)) continue;
                 var aliases = lang.computeIfAbsent(entry.getKey(), ignored -> new ArrayList<>());
                 // Keep source variants searchable; later pack-level names are displayed first.

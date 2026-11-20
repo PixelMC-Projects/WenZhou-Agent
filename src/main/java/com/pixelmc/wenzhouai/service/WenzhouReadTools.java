@@ -44,6 +44,17 @@ public final class WenzhouReadTools {
                 return server.submit(() -> {
                     JsonObject recipes = recipesForItem(server.getRecipeManager(), server.registryAccess(), item, 1);
                     result.add("fixed_output_recipes", recipes);
+                    var ids = recipes.getAsJsonArray("recipe_ids");
+                    if (ids != null && ids.size() == 1 && recipes.get("total").getAsInt() == 1) {
+                        var recipeId = ResourceLocation.tryParse(ids.get(0).getAsString());
+                        try {
+                            var detail = WenzhouRecipes.live(server.getRecipeManager(), server.registryAccess(), recipeId);
+                            if ("live".equals(WzData.string(detail, "status")) && detail.toString().length() <= 3100)
+                                result.add("recipe_detail", detail);
+                        } catch (RuntimeException unsupported) {
+                            // A mod's dynamic ingredient must not prevent returning the successful item lookup.
+                        }
+                    }
                     return result;
                 });
             }, net.minecraft.Util.backgroundExecutor()).exceptionally(ex -> message("unavailable", "本次物品索引未能完成；已有确切 ID 时可直接查配方。"));
@@ -64,6 +75,13 @@ public final class WenzhouReadTools {
             return server.submit(() -> WzPackChanges.query(server, id, page, hints.equals("@loot"))).thenCompose(future -> future);
         return server.submit(
                         () -> {
+                            if ("live".equals(mode)) {
+                                if ("entity_spawns".equals(kind)) return WzSpawnEvidence.query(server, id, page);
+                                if ("biome_tag".equals(kind)) return CompletableFuture.completedFuture(
+                                        WzSpawnEvidence.biomeTag(server.registryAccess().registryOrThrow(Registries.BIOME), id, page));
+                                if ("machine_conversions".equals(kind)) return CompletableFuture.completedFuture(
+                                        WzMachineRecipes.conversions(server.getRecipeManager(), server.registryAccess(), id, page));
+                            }
                             if ("recipe".equals(kind) && page == 1) {
                                 if ("mod".equals(mode)) {
                                     return WenzhouRecipes.inspect(server, id);
@@ -124,7 +142,13 @@ public final class WenzhouReadTools {
         if (id == null) return null;
         return BuiltInRegistries.ITEM
                 .getOptional(id)
-                .map(item -> item.getDescription().getString())
+                .map(item -> {
+                    try {
+                        return net.minecraft.ChatFormatting.stripFormatting(item.getDefaultInstance().getHoverName().getString());
+                    } catch (RuntimeException unusualStack) {
+                        return net.minecraft.ChatFormatting.stripFormatting(item.getDescription().getString());
+                    }
+                })
                 .orElse(null);
     }
 
@@ -184,6 +208,19 @@ public final class WenzhouReadTools {
         result.addProperty("page", page);
         result.addProperty("total", entries.size());
         result.add("items", items);
+        return result;
+    }
+
+    static JsonObject entriesPage(JsonArray rows, int page, String description) {
+        final int pageSize = 12;
+        long start = (page - 1L) * pageSize;
+        if (page < 1 || page > 1 && start >= rows.size()) return WenzhouReadTools.message("invalid_page", "页码超出范围。");
+        var result = WenzhouReadTools.message("live", description);
+        JsonArray selected = new JsonArray();
+        for (int i = (int) start; i < Math.min(rows.size(), start + pageSize); i++) selected.add(rows.get(i));
+        result.add("entries", selected);
+        result.addProperty("total", rows.size());
+        result.addProperty("more", start + pageSize < rows.size());
         return result;
     }
 

@@ -26,6 +26,9 @@ record WzEvidenceSummary(String outcome, String detail) {
             case "invalid_calculation" -> new WzEvidenceSummary("无法计算", string(result, "message"));
             case "live" ->
                     switch (kind) {
+                        case "entity_spawns" -> new WzEvidenceSummary("已查询", "群系表 " + number(result, "biome_entries") + " 项 · 生成配置 " + number(result, "targeted_config_rules") + " 条");
+                        case "biome_tag" -> new WzEvidenceSummary("已核对", "群系标签含 " + number(result, "total") + " 个群系");
+                        case "machine_conversions" -> new WzEvidenceSummary("已核对", "铜锅转换匹配 " + number(result, "total") + " 个烹饪配方");
                         case "find_item" -> {
                             String id = string(result, "unique_item");
                             long count = number(result, "total");

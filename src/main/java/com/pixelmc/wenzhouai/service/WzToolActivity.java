@@ -10,6 +10,9 @@ record WzToolActivity(String action, String target, String icon) {
     static WzToolActivity start(String mode, String kind, String target, String purpose,
                                 JsonObject args, String selectedSummary) {
         return switch (kind) {
+            case "entity_spawns" -> new WzToolActivity("查询生物生成", target, "spawn");
+            case "biome_tag" -> new WzToolActivity("查询群系标签", target, "biome");
+            case "machine_conversions" -> new WzToolActivity("查询机器转换", target, "conversion");
             case "find_item" -> new WzToolActivity("查找物品", target, "item");
             case "item_overview" -> new WzToolActivity("查阅引用物品", target.replace(",", "、"), "item");
             case "tag", "search_tags" -> new WzToolActivity("查询标签", target, "tag");

@@ -39,7 +39,14 @@ final class WzConversation {
         void apply(JsonObject event) {
             String type = str(event, "type"), id = str(event, "id"), text = str(event, "text");
             switch (type) {
-                case "answer.delta" -> { if (!stopping && !stopped && reply == null) stream.append(text); }
+                case "answer.delta" -> {
+                    if (stopping || stopped || reply != null) return;
+                    if (event.has("item") && event.get("item").isJsonObject()) {
+                        var stack = HubWenzhouAnswer.stack(event.getAsJsonObject("item"));
+                        if (!stack.isEmpty()) text = net.minecraft.ChatFormatting.stripFormatting(stack.getHoverName().getString());
+                    }
+                    stream.append(text);
+                }
                 case "answer.reset" -> stream.reset();
                 case "progress" -> {
                     for (int i = 0; !id.isEmpty() && i < activity.size(); i++) {

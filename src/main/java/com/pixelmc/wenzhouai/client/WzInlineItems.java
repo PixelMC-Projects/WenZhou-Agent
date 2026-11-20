@@ -76,7 +76,7 @@ final class WzInlineItems {
                 if (paint && !before.isEmpty()) draw.text(before, x, baseline, size, ink, false);
                 x += draw.textWidth(before, size, false);
                 ItemStack stack = stacks.computeIfAbsent(id, key -> new ItemStack(ForgeRegistries.ITEMS.getValue(key)));
-                String name = stack.getHoverName().getString();
+                String name = net.minecraft.ChatFormatting.stripFormatting(stack.getHoverName().getString());
                 float width = size + 4 + draw.textWidth(name, size, false);
                 if (paint) {
                     icon(stack, x, baseline - size + 2, size, x + width, top, bottom);

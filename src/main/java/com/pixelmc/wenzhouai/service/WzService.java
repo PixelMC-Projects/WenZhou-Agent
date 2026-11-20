@@ -858,13 +858,18 @@ public final class WzService {
                                 WzNetwork.event(server, player, generation, event);
                             });
             WzReply rich = new WzReply(WenzhouReadTools::itemDisplayName);
+            java.util.function.Consumer<JsonObject> sendDelta = update -> {
+                if (run.stopped() || session.hidden || liveFor(player, conversation, 0) != session) return;
+                update.addProperty("conversationId", conversation);
+                update.addProperty("requestId", requestId);
+                WzNetwork.event(server, player, generation, update);
+            };
             var model = new WenzhouChat.TitledModel(WenzhouChat.official(apiKey, () ->
-                    new WzLiveText(rich::answerText, (type, part) -> {
-                        if (run.stopped() || session.hidden || liveFor(player, conversation, 0) != session) return;
-                        var update = event(type, part);
-                        update.addProperty("conversationId", conversation);
-                        update.addProperty("requestId", requestId);
-                        WzNetwork.event(server, player, generation, update);
+                    new WzLiveText(rich::answerText, (type, part) -> sendDelta.accept(event(type, part)), marker -> {
+                        var item = rich.streamItem(marker);
+                        var update = event("answer.delta", item == null ? rich.answerText(marker) : string(item, "name"));
+                        if (item != null) update.add("item", item);
+                        sendDelta.accept(update);
                     })), !WzHistory.hasGeneratedTitle(previous));
             WzTurnNotes notes = new WzTurnNotes(gameplayMemory, player);
             JsonArray events = new JsonArray();
@@ -950,7 +955,12 @@ public final class WzService {
                                     return evidence;
                                 },
                                 usage,
-                                !confirmed && !context.isEmpty(), true, new WzDiagnostics(conversation, requestId));
+                                !confirmed && !context.isEmpty(), true, new WzDiagnostics(conversation, requestId),
+                                answer -> {
+                                    String invalid = rich.unverifiedReferences(answer);
+                                    if (!invalid.isEmpty()) sendDelta.accept(event("answer.reset", ""));
+                                    return invalid;
+                                });
             } catch (WenzhouChat.TopicConfirmation requested) {
                 topic = true;
             } catch (InterruptedException cancelled) {

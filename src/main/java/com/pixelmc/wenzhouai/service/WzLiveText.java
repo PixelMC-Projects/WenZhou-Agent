@@ -10,6 +10,7 @@ final class WzLiveText implements WzCompletionStream.Preview {
     private static final Pattern INTERNAL = Pattern.compile("<\\s*/?\\s*[|｜]");
     private final Function<String, String> itemName;
     private final BiConsumer<String, String> send;
+    private final java.util.function.Consumer<String> itemDelta;
     private final StringBuilder pending = new StringBuilder(), ready = new StringBuilder();
     private long lastSend;
     private boolean hidden, sent;
@@ -17,6 +18,11 @@ final class WzLiveText implements WzCompletionStream.Preview {
     private String highSurrogate = "";
 
     WzLiveText(Function<String, String> itemName, BiConsumer<String, String> send) {
+        this(itemName, send, null);
+    }
+
+    WzLiveText(Function<String, String> itemName, BiConsumer<String, String> send, java.util.function.Consumer<String> itemDelta) {
+        this.itemDelta = itemDelta;
         this.itemName = itemName;
         this.send = send;
     }
@@ -48,8 +54,14 @@ final class WzLiveText implements WzCompletionStream.Preview {
                     if (tokenEnd < 0) break;
                     String token = pending.substring(i, tokenEnd + 2);
                     if (token.equals("[[wz-summary]]")) { hidden = true; break; }
-                    if (token.startsWith("[[item:") || token.startsWith("[[stack:"))
-                        ready.append(itemName.apply(token));
+                    if (token.startsWith("[[item:") || token.startsWith("[[stack:")) {
+                        if (itemDelta == null) ready.append(itemName.apply(token));
+                        else {
+                            flushReady();
+                            itemDelta.accept(token);
+                            sent = true;
+                        }
+                    }
                     i = tokenEnd + 2;
                     continue;
                 }

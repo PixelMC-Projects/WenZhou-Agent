@@ -78,7 +78,13 @@ final class WzItemSearch {
                 if (id == null) continue;
                 String mod = mods.computeIfAbsent(id.getNamespace(), ns -> ModList.get()
                         .getModContainerById(ns).map(m -> m.getModInfo().getDisplayName()).orElse(ns));
-                names.add(new Entry(id, item.getDescription().getString(), mod, item));
+                String label;
+                try {
+                    label = item.getDefaultInstance().getHoverName().getString();
+                } catch (RuntimeException unusualStack) {
+                    label = item.getDescription().getString();
+                }
+                names.add(new Entry(id, net.minecraft.ChatFormatting.stripFormatting(label), mod, item));
             } while (System.nanoTime() < until);
             lastQuery = null;
         }

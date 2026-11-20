@@ -577,15 +577,15 @@ public final class HubWenzhouAnswer {
         if (measuredLanguage != null) {
             ItemStack item = stacks.computeIfAbsent(data, HubWenzhouAnswer::stack);
             if (!item.isEmpty()) {
-                String localized = item.getHoverName().getString();
+                String localized = net.minecraft.ChatFormatting.stripFormatting(item.getHoverName().getString());
                 if (!localized.isBlank()) return localized;
             }
         }
-        String name = string(data.get("name"));
+        String name = net.minecraft.ChatFormatting.stripFormatting(string(data.get("name")));
         return name.isBlank() ? string(data.get("id")) : name;
     }
 
-    private static ItemStack stack(JsonObject data) {
+    static ItemStack stack(JsonObject data) {
         ResourceLocation id = ResourceLocation.tryParse(string(data.get("id")));
         if (id == null || !ForgeRegistries.ITEMS.containsKey(id)) return ItemStack.EMPTY;
         ItemStack stack = new ItemStack(Objects.requireNonNull(ForgeRegistries.ITEMS.getValue(id)));
