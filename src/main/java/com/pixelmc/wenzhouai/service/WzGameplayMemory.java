@@ -15,9 +15,13 @@ final class WzGameplayMemory {
     record Scope(String server, String archive, String pack, String version) {
         static Scope current(JsonObject scope) {
             if (!"current".equals(string(scope, "metadataStatus"))) return null;
+            if (!scope.has("packVersion") || !scope.get("packVersion").isJsonPrimitive()
+                    || !scope.getAsJsonPrimitive("packVersion").isString()) return null;
             var result = new Scope(string(scope, "serverId"), string(scope, "archiveId"),
                     string(scope, "packName"), string(scope, "packVersion"));
-            return result.parts().stream().anyMatch(String::isBlank) ? null : result;
+            // Manager also permits a versioned display name with an empty version column.
+            // Preserve both fields verbatim in the key; never infer a version by parsing a name.
+            return result.server.isBlank() || result.archive.isBlank() || result.pack.isBlank() ? null : result;
         }
         List<String> parts() { return List.of(server, archive, pack, version); }
     }

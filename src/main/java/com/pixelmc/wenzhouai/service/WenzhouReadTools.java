@@ -27,6 +27,11 @@ public final class WenzhouReadTools {
     /** The model host supplies structured arguments, never a shell command. */
     public static CompletableFuture<JsonObject> query(
             MinecraftServer server, String mode, String kind, String name, int page) {
+        return query(server, mode, kind, name, page, "");
+    }
+
+    static CompletableFuture<JsonObject> query(MinecraftServer server, String mode, String kind,
+                                                String name, int page, String hints) {
         if ("read".equals(mode) && "command".equals(kind))
             return WenzhouCommands.run(server, name)
                     .exceptionally(ex -> message("unavailable", "这次只读命令未完成。"));
@@ -47,14 +52,18 @@ public final class WenzhouReadTools {
         }
         if ("live".equals(mode) && "locate_gameplay".equals(kind))
             return WenzhouCommands.locate(name, page);
+        if ("live".equals(mode) && "read_method".equals(kind))
+            return WenzhouCommands.method(name, page);
         if ("live".equals(mode) && ("search_tags".equals(kind) || "item_tags".equals(kind)))
-            return server.submit(() -> WzItemEvidence.tags(kind, name, page));
+            return server.submit(() -> WzItemEvidence.tags(kind, name, page, hints));
         if ("live".equals(mode) && "item_overview".equals(kind))
             return server.submit(() -> WzItemEvidence.overview(server.getRecipeManager(), server.registryAccess(), name))
                     .exceptionally(ex -> message("unavailable", "本次预读未完成，可按物品 ID 单独查阅。"));
         ResourceLocation id = resourceId(name);
         if (id == null || page < 1)
             return CompletableFuture.completedFuture(message("invalid_request", "资源标识或页码无效。"));
+        if ("live".equals(mode) && "pack_changes".equals(kind))
+            return server.submit(() -> WzPackChanges.query(server, id, page)).thenCompose(future -> future);
         return server.submit(
                         () -> {
                             if ("recipe".equals(kind) && page == 1) {
@@ -76,7 +85,7 @@ public final class WenzhouReadTools {
                                 return CompletableFuture.completedFuture(foodEffects(id));
                             }
                             if ("live".equals(mode) && "tag".equals(kind)) {
-                                return CompletableFuture.completedFuture(tag(id, page));
+                                return CompletableFuture.completedFuture(tag(id, page, hints));
                             }
                             if ("live".equals(mode) && "recipes_for_item".equals(kind)) {
                                 return CompletableFuture.completedFuture(
@@ -174,10 +183,12 @@ public final class WenzhouReadTools {
         return result;
     }
 
-    private static JsonObject tag(ResourceLocation id, int page) {
+    private static JsonObject tag(ResourceLocation id, int page, String hints) {
         var members = BuiltInRegistries.ITEM.getTag(TagKey.create(Registries.ITEM, id));
         if (members.isEmpty()) {
-            return message("not_active", "当前物品标签没有注册。");
+            JsonObject result = message("not_active", "精确标签未注册；候选只代表名称相近。请按代码里的实际条件选用。");
+            result.add("suggestions", WzItemEvidence.relatedTags(id, page, hints));
+            return result;
         }
         var entries = members.get();
         long start = (long) (page - 1) * PAGE_SIZE;

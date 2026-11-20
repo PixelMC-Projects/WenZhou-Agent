@@ -7,6 +7,12 @@ import com.google.gson.JsonObject;
 record WzEvidenceSummary(String outcome, String detail) {
     static WzEvidenceSummary from(String mode, String kind, JsonObject result) {
         String status = string(result, "status");
+        if ("memory".equals(mode) && !status.isEmpty())
+            return new WzEvidenceSummary("记忆操作未完成", string(result, "message"));
+        if ("pack_changes".equals(status))
+            return new WzEvidenceSummary("已检索", WzPackChanges.caption(result));
+        if (result.has("suggestions"))
+            return new WzEvidenceSummary("已查阅", "精确标签未命中 · 相关标签 " + number(result.getAsJsonObject("suggestions"), "total") + " 项");
         if ("memory".equals(mode) && status.isEmpty()) {
             if (result.has("matches")) return new WzEvidenceSummary("已检索", "匹配 " + number(result, "total") + " 条玩法笔记");
             if (result.has("saved")) return new WzEvidenceSummary("已更新", "已保存到当前整合包档案");

@@ -911,7 +911,7 @@ public final class WzService {
                                                                                     new JsonObject());
                                                                 return WenzhouReadTools.query(
                                                                         server, mode, kind, target,
-                                                                        page);
+                                                                        page, purpose);
                                                             })
                                                     .thenCompose(result -> result)
                                                     .get(20, TimeUnit.SECONDS);
@@ -968,16 +968,6 @@ public final class WzService {
             if (completed != null) {
                 if (thinking) {
                     String summary = completed.summary();
-                    if (summary.isEmpty()) {
-                        for (int i = events.size() - 1; i >= 0; i--) {
-                            JsonObject row = events.get(i).getAsJsonObject();
-                            String label = string(row, "text");
-                            if (string(row, "type").equals("tool.finish") && label.startsWith("运行命令 · ")) {
-                                summary = label.substring("运行命令 · ".length());
-                                break;
-                            }
-                        }
-                    }
                     publicEvent(player, generation, events, conversation, thoughtId, "progress",
                             summary.isEmpty() ? "已思考" : "思考 · " + summary, "", "");
                 }

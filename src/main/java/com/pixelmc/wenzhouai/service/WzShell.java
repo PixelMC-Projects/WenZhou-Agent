@@ -14,6 +14,8 @@ final class WzShell {
     private static final String RUNNER = "/usr/local/libexec/wenzhou-read";
     private static final int OUTPUT_LIMIT = 12 * 1024;
     private static final List<String> LAUNCH = launch();
+    // A socket installed by the operator opts a dedicated Linux server into the isolated worker.
+    private static final Path SOCKET = Path.of("config","wenzhouai","gameplay.sock").toAbsolutePath();
 
     private static List<String> launch() {
         if (!Boolean.getBoolean("wenzhouai.shell.enabled")) return List.of();
@@ -30,7 +32,32 @@ final class WzShell {
     }
 
     static boolean available() {
-        return !LAUNCH.isEmpty();
+        return !LAUNCH.isEmpty() || socketInstalled();
+    }
+
+    private static boolean socketInstalled() {
+        if (!System.getProperty("os.name").startsWith("Linux")) return false;
+        try {
+            int mode = (int) Files.getAttribute(SOCKET, "unix:mode", java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return (mode & 0170000) == 0140000;
+        } catch (IOException | UnsupportedOperationException ignored) { return false; }
+    }
+
+    private static JsonObject isolated(String script) {
+        try (var channel = java.nio.channels.SocketChannel.open(java.net.StandardProtocolFamily.UNIX)) {
+            CompletableFuture.delayedExecutor(17, TimeUnit.SECONDS).execute(() -> {
+                try { channel.close(); } catch (IOException ignored) { }
+            });
+            channel.connect(java.net.UnixDomainSocketAddress.of(SOCKET));
+            var output = java.nio.channels.Channels.newOutputStream(channel);
+            output.write(script.getBytes(StandardCharsets.UTF_8));
+            channel.shutdownOutput();
+            byte[] bytes = java.nio.channels.Channels.newInputStream(channel).readNBytes(96 * 1024 + 1);
+            if (bytes.length > 96 * 1024) return WenzhouReadTools.message("unavailable","沙箱回执过大。");
+            return com.google.gson.JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();
+        } catch (IOException | RuntimeException failed) {
+            return WenzhouReadTools.message("unavailable","隔离查询服务未响应。");
+        }
     }
 
     static JsonObject execute(String script) {
@@ -38,6 +65,7 @@ final class WzShell {
         if (script.isBlank() || script.length() > 2042 || script.chars().anyMatch(c ->
                 Character.isISOControl(c) && c != '\n' && c != '\t'))
             return WenzhouReadTools.message("invalid_request", "查询脚本为空、过长或含无效字符。");
+        if (socketInstalled()) return isolated(script);
         Process process = null;
         try {
             var builder = new ProcessBuilder(LAUNCH).redirectError(ProcessBuilder.Redirect.DISCARD);

@@ -28,7 +28,16 @@ final class WzGameplayLocator {
         Path jar = mod.getFile().getFilePath();
         try {
             return CompletableFuture.supplyAsync(() -> {
-                try { return locate(jar, parts[1], page); }
+                try {
+                    var result = locate(jar, parts[1], page);
+                    if (result.has("methods")) for (var entry : result.getAsJsonArray("methods")) {
+                        var row = entry.getAsJsonObject();
+                        row.addProperty("method_id", parts[0] + ":" + row.get("class").getAsString() + "#"
+                                + WzMethodEvidence.key(row.get("method").getAsString(), row.get("descriptor").getAsString())
+                                + "@" + (row.has("line") ? row.get("line").getAsInt() : 0));
+                    }
+                    return result;
+                }
                 catch (IOException | RuntimeException failed) { return WenzhouReadTools.message("unavailable", "无法读取这个安装包的玩法实现。"); }
             }, worker);
         } catch (java.util.concurrent.RejectedExecutionException busy) {

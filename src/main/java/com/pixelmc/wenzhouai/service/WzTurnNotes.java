@@ -41,6 +41,19 @@ final class WzTurnNotes {
     }
     void observe(String kind, String target, JsonObject result) {
         String status = string(result, "status");
+        if (kind.equals("tag") && result.has("suggestions"))
+            observe("search_tags", target, result.getAsJsonObject("suggestions"));
+        if (kind.equals("read_method") && status.equals("installed_code")) {
+            source(result, "method " + string(result, "class") + "." + string(result, "method") + string(result, "descriptor"));
+            return;
+        }
+        if (kind.equals("pack_changes") && status.equals("pack_changes")) {
+            for (var element : result.getAsJsonArray("matches")) {
+                var row = element.getAsJsonObject();
+                source(row, string(row,"evidence") + " " + string(row,"path") + " " + string(row,"match"));
+            }
+            return;
+        }
         if (kind.equals("locate_gameplay") && status.equals("installed_code")) {
             for (var entry : result.getAsJsonArray("methods")) {
                 var row = entry.getAsJsonObject();

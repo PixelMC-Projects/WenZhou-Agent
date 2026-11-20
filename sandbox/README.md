@@ -9,3 +9,9 @@
 3. 在 `/opt/wenzhouai/game` 准备当前整合包的玩法资料副本，并运行 `python3 catalog.py /opt/wenzhouai/game` 生成物品翻译检索表。可保留任意模组自有的玩法目录及相对路径；混合目录只复制确认可公开给模型的文件。不要复制服主凭据、聊天、玩家存档、系统路径、设备或套接字。更新模组或魔改脚本时同步更新此视图和索引。
 4. 在系统启动时用管理员账号运行 `wenzhou-limits <执行查询的账号>`，为共享查询工作组配置 384 MiB 内存和 40 个进程上限。cgroup v2 需要在已委派的可写层级配置进程迁移权限。若使用已有的容器资源管理，请在专用查询环境内配置；不要为游戏容器开放特权。隔离或资源控制不可用时运行器返回失败。
 5. Linux 测试服务以 JVM 参数 `-Dwenzhouai.shell.enabled=true` 开启。Windows 本地测试可额外设置 `-Dwenzhouai.shell.wsl=<专用发行版名称>`，WSL 以 `wenzhou` 用户启动相同运行器。模型密钥留在发出 API 请求的游戏服务进程。沙箱没有网络，命令的输出与返回码交给模型解释。
+
+## 游戏服运行在 Docker 中时
+
+Linux 服务端也支持实例中的 Unix 套接字 `config/wenzhouai/gameplay.sock`。宿主通过 systemd 的 Accept=yes 服务将连接的标准输入和输出交给 `container-worker.py`，设置 `WENZHOU_GAME` 指向游戏目录。套接字仅授予游戏服务账号访问，限制同时连接数。游戏容器保持原有权限。
+
+在宿主的 `/opt/pixelmc-wenzhou` 放置查询脚本、实际工具镜像的 SHA-256 ID 文件 `image-id` 以及经服主核准的玩法文件指纹清单。运行 `prepare-container-view.py GAME APPROVED_JSON /opt/pixelmc-wenzhou`，生成只读快照和翻译索引。整合包更新后刷新。查询器核对快照版本，在无网络、无额外 capability 的临时容器中挂载该快照，限制内存、CPU、进程、输出和运行时间。

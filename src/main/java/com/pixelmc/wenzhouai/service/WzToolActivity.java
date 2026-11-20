@@ -15,6 +15,8 @@ record WzToolActivity(String action, String target, String icon) {
             case "tag", "search_tags" -> new WzToolActivity("查询标签", target, "tag");
             case "item_tags" -> new WzToolActivity("反查物品标签", target, "tags");
             case "locate_gameplay" -> new WzToolActivity("定位玩法位置", target, "locate");
+            case "read_method" -> new WzToolActivity("定位玩法位置", target.split("#", 2)[0], "locate");
+            case "pack_changes" -> new WzToolActivity("检索整合包修改", target, "pack-changes");
             case "recipe" -> new WzToolActivity("mod".equals(mode) ? "核对配方来源" : "查询配方", target, "bench");
             case "recipes_for_item" -> new WzToolActivity("查询产物配方", target, "bench");
             case "food_effects" -> new WzToolActivity("查询食用效果", target, "food");

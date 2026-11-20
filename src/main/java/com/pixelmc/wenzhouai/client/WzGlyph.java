@@ -61,6 +61,7 @@ final class WzGlyph {
                     case "calculator" ->
                             "M6 3h12q1 0 1 1v16q0 1-1 1H6q-1 0-1-1V4q0-1 1-1ZM8 7h8M8 12h2m4 0h2m-8 4h2m4 0h2";
                     case "tag" -> "M3 4h8l10 10-7 7L3 10ZM7 7.5h.1";
+                    case "pack-changes" -> "M3 7l8-4 8 4-8 4ZM3 7v9l7 4m1-9v5m3-1 2 2 5-6";
                     case "tags" -> "M3 4h7l8 8-6 6-9-9ZM7 7h.1M20 10l2 2-9 9";
                     case "locate" -> "M3 8V4h4m10 0h4v4m0 8v4h-4m-10 0H3v-4m6-7-3 3 3 3m6-6 3 3-3 3";
                     case "food" -> "M4 3v5q0 3 3 3t3-3V3M7 3v18m12 0V3q-5 2-5 10h5";

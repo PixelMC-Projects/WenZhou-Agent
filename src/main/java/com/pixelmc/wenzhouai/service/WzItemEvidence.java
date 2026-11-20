@@ -64,7 +64,7 @@ final class WzItemEvidence {
         return result;
     }
 
-    static JsonObject tags(String kind, String query, int page) {
+    static JsonObject tags(String kind, String query, int page, String hints) {
         Stream<TagKey<Item>> stream;
         if (kind.equals("item_tags")) {
             var id = WenzhouReadTools.resourceId(query);
@@ -72,14 +72,69 @@ final class WzItemEvidence {
             if (item == null) return WenzhouReadTools.message("not_registered", "该物品未注册。");
             stream = item.builtInRegistryHolder().tags();
         } else {
-            String term = query.strip().toLowerCase(java.util.Locale.ROOT);
+            String term = query.strip().replaceFirst("^get_?(?=[A-Z])", "")
+                    .replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase(java.util.Locale.ROOT);
             if (term.startsWith("#")) term = term.substring(1);
             if (!term.matches("[a-z0-9_./:-]{1,120}"))
                 return WenzhouReadTools.message("invalid_request", "请输入标签 ID 的完整名称或一段英文关键词。");
-            String needle = term;
-            stream = BuiltInRegistries.ITEM.getTagNames().filter(tag -> tag.location().toString().contains(needle));
+            return search(term, hints, page);
         }
-        List<TagKey<Item>> sorted = stream.sorted(java.util.Comparator.comparing(tag -> tag.location().toString())).toList();
+        return ranked(stream, query.replace("#", "").toLowerCase(java.util.Locale.ROOT), hints, page);
+    }
+
+    static JsonObject relatedTags(ResourceLocation missing, int page, String hints) {
+        return search(missing.toString(), hints, page);
+    }
+
+    private static JsonObject search(String query, String hints, int page) {
+        int colon = query.indexOf(':');
+        String path = query.substring(colon + 1);
+        if (path.isEmpty()) return WenzhouReadTools.message("invalid_request", "请输入标签路径。");
+        List<TagKey<Item>> names = BuiltInRegistries.ITEM.getTagNames().toList();
+        var candidates = names.stream().filter(tag -> tag.location().toString().contains(query)
+                || (colon >= 0 && tag.location().getPath().contains(path))).toList();
+        if (candidates.isEmpty()) {
+            var fragments = java.util.Arrays.stream(path.split("[_./-]+")).filter(word -> word.length() >= 3)
+                    .filter(word -> !word.equals("tag") && !word.equals("item")).toList();
+            candidates = names.stream().filter(tag -> fragments.stream().anyMatch(tag.location().getPath()::contains)).toList();
+        }
+        return ranked(candidates.stream(), query, hints, page);
+    }
+
+    private static JsonObject ranked(Stream<TagKey<Item>> candidates, String query, String hints, int page) {
+        record Scored(TagKey<Item> tag, int score) {}
+        String[] words = hints.isBlank() ? new String[0] : hints.split(" +");
+        String path = query.substring(query.indexOf(':') + 1);
+        var sorted = candidates.map(tag -> {
+            var id = tag.location();
+            int score = id.toString().equals(query) ? 1000 : 0;
+            if (query.startsWith(id.getNamespace() + ":")) score += 2;
+            if (id.getPath().equals(path)) score += 8;
+            if (id.getPath().contains(path)) score += 4;
+            if (java.util.Arrays.asList(id.getPath().split("[_./-]+")).contains(path)) score += 5;
+            int pending = 0;
+            for (int i = 0; i < words.length; i++) {
+                if (id.toString().contains(words[i])) score += 12;
+                else pending |= 1 << i;
+            }
+            if (pending != 0) {
+                var members = BuiltInRegistries.ITEM.getTag(tag).orElseThrow();
+                for (var member : members) {
+                    String item = BuiltInRegistries.ITEM.getKey(member.value()).toString();
+                    for (int i = 0; i < words.length; i++) {
+                        int bit = 1 << i;
+                        if ((pending & bit) != 0 && item.contains(words[i])) { score += 5; pending &= ~bit; }
+                    }
+                    if (pending == 0) break;
+                }
+            }
+            return new Scored(tag, score);
+        }).sorted(java.util.Comparator.comparingInt(Scored::score).reversed()
+                .thenComparing(row -> row.tag.location().toString())).map(Scored::tag).toList();
+        return tagPage(sorted, page);
+    }
+
+    private static JsonObject tagPage(List<TagKey<Item>> sorted, int page) {
         long start = (page - 1L) * 8;
         if (page < 1 || (page > 1 && start >= sorted.size()))
             return WenzhouReadTools.message("invalid_page", "标签查询页码超出范围。");
