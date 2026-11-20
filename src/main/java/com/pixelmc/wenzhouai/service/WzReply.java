@@ -8,6 +8,8 @@ import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -19,7 +21,40 @@ final class WzReply {
             Pattern.compile("\\[\\[(recipe|item|stack):(" + RESOURCE_ID + "|[a-z0-9-]{36})]]");
     private static final Pattern VALID_RESOURCE = Pattern.compile(RESOURCE_ID);
     private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}&&[^\\n\\t]]");
-    private static final int MAX_INLINE = 32;
+    private static final int INLINE_ITEM_BYTES = 6500;
+    // Only a delimited list label can be redundant. Ordinary prose before an item stays intact.
+    private static final Pattern LIST_LABEL = Pattern.compile(
+            "(?:[、，,][ \\t]*|(?:^|\\n)[ \\t]*[-•][ \\t]+)([^、，,\\n\\r]{1,160}?)[ \\t]*\\z");
+
+    record ListLabel(JsonArray parts, int position, String prefix, String label, String id) {
+        void localize(WzItemIndex index) {
+            if (index.hasDisplayName(id, label)) parts.set(position, new com.google.gson.JsonPrimitive(prefix));
+        }
+    }
+
+    static List<ListLabel> listLabels(JsonObject message) {
+        List<ListLabel> labels = new ArrayList<>();
+        if (message.has("messages")) {
+            for (var turn : message.getAsJsonArray("messages")) collectLabels(turn.getAsJsonObject(), labels);
+        } else collectLabels(message, labels);
+        return labels;
+    }
+
+    private static void collectLabels(JsonObject turn, List<ListLabel> labels) {
+        JsonObject reply = object(turn, "reply");
+        if (!reply.has("text") || !reply.get("text").isJsonArray()) return;
+        JsonArray parts = reply.getAsJsonArray("text");
+        JsonObject items = object(reply, "items");
+        for (int i = 1; i < parts.size(); i++) {
+            if (!parts.get(i).isJsonObject() || !parts.get(i-1).isJsonPrimitive()) continue;
+            String key = string(parts.get(i).getAsJsonObject(), "item");
+            String id = string(object(items, key), "id");
+            if (id.isEmpty()) continue;
+            String text = parts.get(i-1).getAsString();
+            var match = LIST_LABEL.matcher(text);
+            if (match.find()) labels.add(new ListLabel(parts, i-1, text.substring(0, match.start(1)), match.group(1), id));
+        }
+    }
     private final Map<String, JsonObject> recipes = new HashMap<>();
     private final Map<String, JsonObject> stacks = new HashMap<>();
     private final Function<String, String> itemNames;
@@ -133,7 +168,6 @@ final class WzReply {
         var matcher = REFERENCE.matcher(source);
         Projection result = new Projection();
         int previous = 0;
-        int inline = 0;
         int itemBytes = 0;
         while (matcher.find()) {
             result.text(source.substring(previous, matcher.start()));
@@ -150,8 +184,8 @@ final class WzReply {
             int size =
                     result.items.has(localKey)
                             ? 0
-                            : item.toString().getBytes(StandardCharsets.UTF_8).length;
-            if (inline++ >= MAX_INLINE || itemBytes + size > 6500) {
+                            : localKey.length() + 4 + item.toString().getBytes(StandardCharsets.UTF_8).length;
+            if (itemBytes + size > INLINE_ITEM_BYTES) {
                 result.text(name);
                 continue;
             }

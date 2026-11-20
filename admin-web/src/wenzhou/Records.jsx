@@ -221,21 +221,54 @@ export default function Records({people,toast,gameConnected}) {
   useEffect(()=>{
     if (search.trim() !== query) return;
     const controller = new AbortController();
+    const {signal} = controller;
+    let busy = false;
+    let timer;
+    let presenceKey;
     setError('');
-    request(people ? 'players' : 'sessions', {tab,query,page,sort}, controller.signal, gameConnected)
-      .then(next => {
-        if (controller.signal.aborted) return;
+
+    async function load() {
+      clearTimeout(timer);
+      if (document.hidden || signal.aborted || busy) return;
+      busy = true;
+      try {
+        if (people && presenceKey !== undefined) {
+          const {players} = await request('presence', {}, signal);
+          if (signal.aborted) return;
+          if (JSON.stringify(players.sort()) === presenceKey) {
+            setError('');
+            return;
+          }
+        }
+        const next = await request(people ? 'players' : 'sessions', {tab,query,page,sort}, signal, gameConnected);
+        if (signal.aborted) return;
         const last = Math.max(0, Math.ceil(next.total / size) - 1);
         if (page > last) setPage(last);
         else setResult({...next,tab,page});
-      })
-      .catch(e => {
-        if (!controller.signal.aborted) {
-          setResult(null);
+        if (Array.isArray(next.onlineIds)) presenceKey = JSON.stringify(next.onlineIds.sort());
+        setError('');
+      } catch (e) {
+        if (!signal.aborted) {
+          if ([401,403].includes(e.status)) {
+            setResult(null);
+            setPlayer(null);
+            setSelected(null);
+            controller.abort();
+          }
           setError(e.message);
         }
-      });
-    return () => controller.abort();
+      } finally {
+        busy = false;
+        if (!document.hidden && !signal.aborted) timer = setTimeout(load, people ? 5000 : 10000);
+      }
+    }
+    document.addEventListener('visibilitychange', load);
+    load();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', load);
+    };
   },[people,tab,query,search,page,sort,refresh,size,gameConnected]);
 
   const visible = result?.tab === tab && result.page === page ? result : null;
@@ -319,7 +352,9 @@ export default function Records({people,toast,gameConnected}) {
       close={closeDetail}
       footer={player && selected && <button className="button secondary" onClick={closeDetail}><ArrowLeft size={14}/>返回玩家历史</button>}>
       {(selected?.loading || player?.loading) && <div className="editor-body" role="status">正在读取详情…</div>}
-      {player && !player.loading && <PlayerDetail key={player.playerId} player={player} policy={player.policy} showAgreement={player.showAgreement}
+      {player && !player.loading && <PlayerDetail key={player.playerId}
+        player={Array.isArray(visible?.onlineIds) ? {...player,isOnline:visible.onlineIds.includes(player.playerId)} : player}
+        policy={player.policy} showAgreement={player.showAgreement}
         hidden={Boolean(selected)} tab={playerTab} setTab={setPlayerTab} toast={toast} onOpen={showThread} gameConnected={gameConnected}
         onChange={next=>{setPlayer(next);setRefresh(n=>n+1);}}/>}
       {selected && !selected.loading && <Thread key={selected.playerId+"/"+selected.id} row={selected} bodyRef={threadBody} onUnavailable={closeUnavailable} gameConnected={gameConnected}/>}

@@ -44,9 +44,17 @@ final class WzItemIndex {
                 && query.codePoints().noneMatch(Character::isISOControl);
     }
 
+    boolean hasDisplayName(String id, String label) {
+        Candidate row = byId.get(id);
+        if (row == null) return false;
+        Entry item = row.item();
+        return label.equals(item.displayName()) || item.chinese().contains(label) || item.english().contains(label);
+    }
+
     JsonObject find(String query) {
         if (!valid(query)) return WzData.error("请输入有效的物品名称或注册 ID。");
         String input = query.strip();
+        if (input.indexOf('*') >= 0) return matchIds(input);
         Candidate id = byId.get(input.toLowerCase(Locale.ROOT));
         if (id != null) return result(query, "id", List.of(id));
 
@@ -66,6 +74,19 @@ final class WzItemIndex {
         }
         starts.addAll(contains);
         return result(query, starts.isEmpty() ? "none" : "partial", starts);
+    }
+
+    private JsonObject matchIds(String pattern) {
+        if (!pattern.matches("[a-z0-9_.-]+:(?:\\*[a-z0-9_./-]+|[a-z0-9_./-]+\\*)"))
+            return WzData.error("注册名统计请使用 modid:*后缀 或 modid:前缀*。");
+        int star = pattern.indexOf('*');
+        String prefix = pattern.substring(0, star);
+        String suffix = pattern.substring(star + 1);
+        List<Candidate> matches = entries.stream().filter(candidate -> {
+            String id = candidate.item().id();
+            return id.startsWith(prefix) && id.endsWith(suffix);
+        }).toList();
+        return result(pattern, "id_pattern", matches);
     }
 
     private static JsonObject result(String query, String match, List<Candidate> selected) {

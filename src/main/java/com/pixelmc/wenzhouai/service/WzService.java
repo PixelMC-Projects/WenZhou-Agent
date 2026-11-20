@@ -93,7 +93,8 @@ public final class WzService {
             return CompletableFuture.completedFuture(error("问舟操作不可用"));
         long generation = current.generation(player);
         if (action.equals("stop")) return CompletableFuture.completedFuture(current.stopAsk(player, body));
-        if (action.equals("ask")) return current.ask(player, body, generation);
+        if (action.equals("ask")) return current.ask(player, body, generation)
+                .thenCompose(message -> localizeLists(current.server, message));
         CompletableFuture<JsonObject> reply = new CompletableFuture<>();
         try {
             current.controls.execute(
@@ -107,7 +108,16 @@ public final class WzService {
         } catch (RejectedExecutionException busy) {
             reply.complete(error("请求过于频繁，请稍后重试"));
         }
-        return reply;
+        return action.equals("history") ? reply.thenCompose(message -> localizeLists(current.server, message)) : reply;
+    }
+
+    private static CompletableFuture<JsonObject> localizeLists(MinecraftServer server, JsonObject message) {
+        var labels = WzReply.listLabels(message);
+        if (labels.isEmpty()) return CompletableFuture.completedFuture(message);
+        return WzRegisteredItems.index(server).thenApplyAsync(catalog -> {
+            labels.forEach(label -> label.localize(catalog.index()));
+            return message;
+        }).exceptionally(unavailable -> message);
     }
 
     public static WzAdminBackend.Data adminData() {

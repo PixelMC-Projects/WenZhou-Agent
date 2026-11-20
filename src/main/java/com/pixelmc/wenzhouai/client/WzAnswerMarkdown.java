@@ -11,6 +11,22 @@ final class WzAnswerMarkdown {
     private static final Pattern TOKEN = Pattern.compile(
             "(?m)^(#{1,6})[ \\t]+([^\\n]*)|^([ \\t]*)[-*+][ \\t]+|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|\u0060([^\u0060\\n]+)\u0060");
 
+    // Older replies sometimes label both the list entry and the immediately following item.
+    static String beforeItem(String text, String localName, String savedName) {
+        String end = text.stripTrailing();
+        if (text.substring(end.length()).contains("\n")) return text;
+        for (String name : List.of(localName, savedName)) {
+            if (name.isBlank() || !end.endsWith(name)) continue;
+            String prefix = end.substring(0, end.length() - name.length());
+            String boundary = prefix.stripTrailing();
+            if (boundary.isEmpty() || prefix.endsWith("\n") || boundary.endsWith("、")
+                    || boundary.endsWith("，") || boundary.endsWith(",")
+                    || boundary.equals("-") || boundary.endsWith("\n-")
+                    || boundary.equals("•") || boundary.endsWith("\n•")) return prefix;
+        }
+        return text;
+    }
+
     static List<WzParagraph.Run> format(List<WzParagraph.Run> source) {
         StringBuilder text = new StringBuilder();
         Map<Integer, WzParagraph.Run> references = new HashMap<>();

@@ -65,6 +65,7 @@ public final class WzAdminBackend  {
             case "status" -> withQuotaSettings(data.settings(operation, input));
             case "quota.set", "quota.player", "quota.reset", "quota.resetall" -> quota(operation, input, operator);
             case "players" -> players(input);
+            case "presence" -> await(directory.profiles(true));
             case "player" -> player(uuid(input, "playerId"));
             case "grant" -> grant(input, operator);
             case "sessions" -> sessions(input);
@@ -144,6 +145,7 @@ public final class WzAdminBackend  {
         if (!sortByQuota) loadQuotas(rows);
         for (var row : rows) row.remove("receipt");
         JsonObject output = result(rows, candidates.size(), counts);
+        output.add("onlineIds", roster.getAsJsonArray("online"));
         output.add("policy", policy.get("policy"));
         output.addProperty("showAgreement", showAgreement);
         return withQuotaSettings(output);

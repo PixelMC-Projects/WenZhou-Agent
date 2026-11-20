@@ -239,6 +239,14 @@ public final class HubWenzhouAnswer {
                 String key = string(ref.get("item"));
                 JsonObject data = object(items, key);
                 String label = data == null ? string(ref.get("label")) : displayName(data);
+                if (data != null && !runs.isEmpty()) {
+                    int last = runs.size() - 1;
+                    WzParagraph.Run previous = runs.get(last);
+                    if (previous.item() == null && !previous.muted()) {
+                        String prefix = WzAnswerMarkdown.beforeItem(previous.text(), label, string(data.get("name")));
+                        if (!prefix.equals(previous.text())) runs.set(last, new WzParagraph.Run(prefix));
+                    }
+                }
                 runs.add(
                         new WzParagraph.Run(
                                 label.isBlank() ? key : label, false, false, null, data));

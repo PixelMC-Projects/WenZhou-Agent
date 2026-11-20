@@ -6,7 +6,7 @@
 
 Forge 1.20.1 客户端和专用服务端均安装问舟与 PixelMC Hub 0.5.5-dev。PixelMC Manager 0.9.0-dev 安装在专用服务端。服主配置服务并在「玩家权限」授权后，玩家从手册左侧的「问舟 BETA」进入。历史可续聊，输入栏发送按钮旁显示当前会话累计费用，悬停可查看各项用量。
 
-在 Manager 的「问舟AI → 服务管理」配置模型和本服协议，再从「玩家权限」授予访问权限。独立后台需要兼容的 Manager Service 0.9.0-dev.web.5；配置模板见 [wenzhouai-admin.properties.example](wenzhouai-admin.properties.example)。可选的模组代码查阅环境见 [沙箱安装说明](sandbox/README.md)。
+在 Manager 的「问舟AI → 服务管理」配置模型和本服协议，再从「玩家权限」授予访问权限。Manager Service 0.9.0-dev.web.6 支持已打开的玩家列表与详情自动更新在线状态。配置模板见 [wenzhouai-admin.properties.example](wenzhouai-admin.properties.example)。可选的模组代码查阅环境见 [沙箱安装说明](sandbox/README.md)。
 
 ## 玩法查询和共享笔记
 
