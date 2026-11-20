@@ -11,8 +11,6 @@ import net.minecraft.world.item.crafting.RecipeManager;
 
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.TreeSet;
 import java.util.stream.Stream;
 
 final class WzItemEvidence {
@@ -26,29 +24,21 @@ final class WzItemEvidence {
                 BuiltInRegistries.ITEM.getOptional(id).ifPresent(item -> items.put(item, id));
         }
         if (items.isEmpty()) return WenzhouReadTools.message("not_registered", "引用的物品未注册。");
-        Map<Item, TreeSet<ResourceLocation>> matches = new LinkedHashMap<>();
-        items.keySet().forEach(item -> matches.put(item, new TreeSet<>()));
         int unreadable = 0;
-        for (var recipe : recipes.getRecipes()) {
-            try {
-                var output = recipe.getResultItem(registries);
-                var matching = matches.get(output.getItem());
-                if (!output.isEmpty() && matching != null) matching.add(recipe.getId());
-            } catch (RuntimeException unavailable) {
-                unreadable++;
-            }
-        }
         JsonArray rows = new JsonArray();
         for (var entry : items.entrySet()) {
-            var idsForItem = matches.get(entry.getKey());
+            var page = WzRecipeIndex.get(recipes, registries).page(entry.getValue(), 1, false);
+            var idsForItem = page.getAsJsonArray("recipe_ids");
+            int count = page.get("total").getAsInt();
+            unreadable = page.get("unreadable").getAsInt();
             JsonObject row = new JsonObject();
             row.addProperty("item", entry.getValue().toString());
-            row.addProperty("count", idsForItem.size());
+            row.addProperty("count", count);
             JsonArray candidates = new JsonArray();
-            idsForItem.stream().limit(6).forEach(id -> candidates.add(id.toString()));
+            for (int i = 0; i < Math.min(6, idsForItem.size()); i++) candidates.add(idsForItem.get(i));
             row.add("recipe_ids", candidates);
-            if (idsForItem.size() == 1) {
-                var id = idsForItem.first();
+            if (count == 1) {
+                var id = ResourceLocation.tryParse(idsForItem.get(0).getAsString());
                 try {
                     var evidence = WenzhouRecipes.live(recipes, registries, id);
                     if (evidence.toString().length() <= 3100) row.add("detail", evidence);
@@ -58,7 +48,7 @@ final class WzItemEvidence {
             }
             rows.add(row);
         }
-        var result = WenzhouReadTools.message("live", "已注册物品与本服固定产物配方。零项或回拼配方仍需调查其他来源。");
+        var result = WenzhouReadTools.message("live", "已注册物品与本服声明产物配方（含切配额外产物）。零项或回拼配方仍需调查其他来源。");
         result.add("items", rows);
         result.addProperty("unreadable", unreadable);
         return result;

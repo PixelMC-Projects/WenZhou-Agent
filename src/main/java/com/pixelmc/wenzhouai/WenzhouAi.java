@@ -7,6 +7,8 @@ import com.pixelmc.wenzhouai.manager.WzAdminServer;
 import com.pixelmc.wenzhouai.manager.WzManagerStorage;
 import com.pixelmc.wenzhouai.network.WzNetwork;
 import com.pixelmc.wenzhouai.service.WzService;
+import com.pixelmc.wenzhouai.service.WenzhouReadTools;
+import net.minecraftforge.event.OnDatapackSyncEvent;
 import com.pixelmc.pixelmcmanager.api.ManagerBridgeApi;
 import java.io.IOException;
 import java.util.UUID;
@@ -48,10 +50,12 @@ public final class WenzhouAi {
         WzNetwork.register();
         MinecraftForge.EVENT_BUS.addListener(this::start);
         MinecraftForge.EVENT_BUS.addListener(this::stop);
+        MinecraftForge.EVENT_BUS.addListener(this::datapackSync);
     }
 
     private void start(ServerStartedEvent event) {
         var server = event.getServer();
+        WenzhouReadTools.refreshRecipeIndex(server);
         WzService.start(server);
         if (server.isDedicatedServer()) {
             try {
@@ -71,7 +75,13 @@ public final class WenzhouAi {
         }
     }
 
+    private void datapackSync(OnDatapackSyncEvent event) {
+        if (event.getPlayer() == null)
+            WenzhouReadTools.refreshRecipeIndex(event.getPlayerList().getServer());
+    }
+
     private void stop(ServerStoppingEvent event) {
+        WenzhouReadTools.clearRecipeIndex();
         if (admin != null) {
             admin.close();
             admin = null;

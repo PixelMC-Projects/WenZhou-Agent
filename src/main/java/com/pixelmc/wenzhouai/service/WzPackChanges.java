@@ -18,19 +18,50 @@ final class WzPackChanges {
     private static final List<String> GROUPS = List.of("KubeJS","LootJS","CraftTweaker","数据包","掉落修饰器");
     private static final java.util.concurrent.ExecutorService WORKER = new ThreadPoolExecutor(1,1,30,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(8), task -> { var t = new Thread(task,"Wenzhou pack changes"); t.setDaemon(true); return t; });
+    private record LootPage(ResourceLocation target, int page) {}
+    private static final Map<LootPage,CompletableFuture<JsonObject>> lootPages = new LinkedHashMap<>(16,.75f,true);
+    private static java.lang.ref.WeakReference<ResourceManager> cachedManager = new java.lang.ref.WeakReference<>(null);
+
+    static synchronized void clear() {
+        lootPages.clear();
+        cachedManager.clear();
+    }
 
     static CompletableFuture<JsonObject> query(MinecraftServer server, ResourceLocation id, int page) {
+        return query(server,id,page,false);
+    }
+
+    static synchronized CompletableFuture<JsonObject> query(MinecraftServer server, ResourceLocation id, int page, boolean lootOnly) {
         var manager = server.getResourceManager();
+        var key = new LootPage(id,page);
+        if (lootOnly) {
+            if (cachedManager.get() != manager) {
+                lootPages.clear();
+                cachedManager = new java.lang.ref.WeakReference<>(manager);
+            }
+            var cached = lootPages.get(key);
+            if (cached != null) return cached.thenApply(JsonObject::deepCopy)
+                    .exceptionally(ex -> WenzhouReadTools.message("unavailable","本次整合包资料未能读取。"));
+        }
         var tags = new HashSet<String>();
         BuiltInRegistries.ITEM.getOptional(id).ifPresent(item -> item.builtInRegistryHolder().tags()
                 .forEach(tag -> tags.add("#" + tag.location())));
         try {
-            return CompletableFuture.supplyAsync(() -> {
-                var scan = new Scan(id, tags);
+            var scanPage = CompletableFuture.supplyAsync(() -> {
+                var scan = new Scan(id, tags, lootOnly);
                 scan.resources(manager);
                 scan.scripts(FMLPaths.GAMEDIR.get());
                 return scan.page(page);
-            }, WORKER).exceptionally(ex -> WenzhouReadTools.message("unavailable","本次整合包资料未能读取。"));
+            }, WORKER);
+            if (lootOnly) {
+                lootPages.put(key,scanPage);
+                if (lootPages.size() > 48) lootPages.remove(lootPages.keySet().iterator().next());
+                scanPage.whenComplete((result,failure) -> {
+                    if (failure != null) synchronized (WzPackChanges.class) { lootPages.remove(key,scanPage); }
+                });
+            }
+            return scanPage.thenApply(JsonObject::deepCopy)
+                    .exceptionally(ex -> WenzhouReadTools.message("unavailable","本次整合包资料未能读取。"));
         } catch (RejectedExecutionException busy) {
             return CompletableFuture.completedFuture(WenzhouReadTools.message("busy","整合包资料正在查阅。"));
         }
@@ -39,12 +70,17 @@ final class WzPackChanges {
     private static final class Scan {
         final ResourceLocation target;
         final Set<String> tags;
+        final boolean lootOnly;
         final Pattern ids = Pattern.compile("#?[a-z0-9_.-]+:[a-z0-9_./-]+");
         final Pattern tableCall = Pattern.compile("\\.addLootTableModifier\\(\\s*['\"]([a-z0-9_.-]+:[a-z0-9_./-]+)['\"]");
         final List<JsonObject> matches = new ArrayList<>();
         int unreadable;
 
-        Scan(ResourceLocation target, Set<String> tags) { this.target = target; this.tags = tags; }
+        Scan(ResourceLocation target, Set<String> tags, boolean lootOnly) {
+            this.target = target;
+            this.tags = tags;
+            this.lootOnly = lootOnly;
+        }
 
         String match(String text) {
             var matcher = ids.matcher(text.replace("<item:", "<").replace("<tag:items:", "<#"));
@@ -69,6 +105,7 @@ final class WzPackChanges {
 
         void resources(ResourceManager manager) {
             for (String folder : List.of("recipes","tags/items","loot_tables","loot_modifiers")) {
+                if (lootOnly && !folder.startsWith("loot_")) continue;
                 boolean tag = folder.equals("tags/items"), modifier = folder.equals("loot_modifiers");
                 var stacks = manager.listResourceStacks(folder, id -> id.getPath().endsWith(".json"));
                 for (var entry : stacks.entrySet()) {
@@ -92,7 +129,14 @@ final class WzPackChanges {
                                 String source = kube ? "KubeJS" : modifier ? "掉落修饰器" : "数据包";
                                 String evidence = tag ? "已加载的标签层" : modifier ? "当前修饰器定义，触发与启用条件另查"
                                         : i > 0 ? "当前数据包覆盖了同名定义" : "当前数据包提供的定义";
-                                add(source, pack + "/" + id, evidence, via, 0);
+                                var row = add(source, pack + "/" + id, evidence, via, 0);
+                                if (modifier && lootOnly) {
+                                    var definition = JsonParser.parseString(json).getAsJsonObject();
+                                    for (String field : List.of("type","conditions","item","loot_table_id")) {
+                                        var value = definition.get(field);
+                                        if (value != null && value.toString().length() <= 600) row.add(field,value);
+                                    }
+                                }
                             }
                             if (!tag || (i > 0 && replacesTag(json))) break;
                         } catch (IOException | RuntimeException invalid) { unreadable++; break; }
@@ -123,11 +167,14 @@ final class WzPackChanges {
                                 byte[] bytes = in.readNBytes(MAX_BYTES + 1);
                                 if (bytes.length > MAX_BYTES) { unreadable++; continue; }
                                 String script = new String(bytes, StandardCharsets.UTF_8);
+                                if (lootOnly && !script.toLowerCase(Locale.ROOT).contains("loot")) continue;
                                 String source = zen ? "CraftTweaker" : script.contains("LootJS.") ? "LootJS" : "KubeJS";
                                 String path = folder + "/" + root.relativize(file).toString().replace('\\','/');
                                 JsonArray tables = null;
                                 int line = 0;
-                                for (String text : script.lines().toList()) {
+                                var lines = script.lines().toList();
+                                var rules = source.equals("LootJS") ? new WzLootRuleEvidence(lines) : null;
+                                for (String text : lines) {
                                     line++;
                                     if (text.startsWith("LootJS.modifiers(")) tables = new JsonArray();
                                     if (tables != null) {
@@ -147,6 +194,8 @@ final class WzPackChanges {
                                         var row = add(source,path,"脚本位置；同段表名是定位线索，执行条件另查",via,line);
                                         row.addProperty("column",tokens.start()+1);
                                         if (tables != null) row.add("nearby_tables",tables);
+                                        if (rules != null) rules.annotate(row,line-1,via,text);
+                                        else if (lootOnly) row.addProperty("excerpt",WzLootRuleEvidence.snippet(text));
                                     }
                                     if (text.startsWith("})")) tables = null;
                                 }
@@ -177,6 +226,12 @@ final class WzPackChanges {
             var rows = new JsonArray();
             matches.stream().skip((page - 1L)*12).limit(12).forEach(rows::add);
             result.add("matches",rows);
+            if (lootOnly) {
+                result.addProperty("scope","loot");
+                result.addProperty("lootjs_loaded",net.minecraftforge.fml.ModList.get().isLoaded("lootjs"));
+                result.addProperty("more",page*12L < matches.size());
+                result.addProperty("interpretation","script_rules 标注脚本中的操作和表。代码片段可能省略外层条件；命中不代表已执行。仅有行号时需核实语义。用 pack_changes(view=loot) 继续翻页。");
+            }
             return result;
         }
     }

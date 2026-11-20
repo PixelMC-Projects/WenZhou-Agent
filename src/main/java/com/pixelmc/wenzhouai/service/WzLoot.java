@@ -115,6 +115,36 @@ final class WzLoot {
         return future.thenApplyAsync(index -> index.sources(id.toString(), itemTags, page), Util.ioPool());
     }
 
+    static CompletableFuture<JsonObject> withPackChanges(MinecraftServer server, String kind, ResourceLocation id, int page) {
+        var base = query(server, kind, id, page);
+        // Rule results paginate independently of the raw table and source pages.
+        return base.thenCombine(WzPackChanges.query(server, id, 1, true), WzLoot::attachChanges);
+    }
+
+    private static JsonObject attachChanges(JsonObject result, JsonObject changes) {
+        result.add("pack_changes", changes);
+        if (!"live".equals(WzData.string(result,"status"))) return result;
+        result.addProperty("message","这里列出数据包原表。结合 pack_changes 检查移除、追加、替换和触发条件，再判断最终掉落。");
+        if (!result.has("tables")) return result;
+        var operations = new HashMap<String,Set<String>>();
+        for (var hit : array(changes,"matches")) {
+            for (var rule : array(hit.getAsJsonObject(),"script_rules")) {
+                var evidence = rule.getAsJsonObject();
+                operations.computeIfAbsent(WzData.string(evidence,"table"), unused -> new TreeSet<>())
+                        .add(WzData.string(evidence,"operation"));
+            }
+        }
+        for (var element : array(result,"tables")) {
+            var row = element.getAsJsonObject();
+            var names = operations.get(WzData.string(row,"table"));
+            if (names == null) continue;
+            var list = new JsonArray();
+            names.forEach(list::add);
+            row.add("script_operations",list);
+        }
+        return result;
+    }
+
     private static Resource definition(ResourceManager resources, ResourceLocation table) throws IOException {
         return resources.getResourceOrThrow(table.withPath("loot_tables/" + table.getPath() + ".json"));
     }

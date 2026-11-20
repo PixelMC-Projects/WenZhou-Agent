@@ -30,6 +30,11 @@ final class WzGameplayLocator {
             return CompletableFuture.supplyAsync(() -> {
                 try {
                     var result = interactions ? WzInteractionFinder.find(jar, parts[1], page) : locate(jar, parts[1], page);
+                    if (interactions && result.has("total") && result.get("total").getAsInt() == 0) {
+                        result = locate(jar, parts[1], page);
+                        result.addProperty("fallback", "symbol_references");
+                        result.addProperty("message", "专用交互索引未命中，已用相同标识查找普通符号引用；用 read_method 确认入口和产物方向。");
+                    }
                     String sha = WzJarFingerprint.of(jar);
                     if (result.has("methods")) for (var entry : result.getAsJsonArray("methods")) {
                         var row = entry.getAsJsonObject();

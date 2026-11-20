@@ -137,9 +137,11 @@ final class WzTurnNotes {
                     source(row, "tag " + tag);
                 }
             }
-            case "recipes_for_item", "loot_sources" -> {
+            case "recipes_for_item", "recipes_using_item", "loot_sources" -> {
                 subject("item", target);
-                if (result.get("total").getAsInt() > 0) source(result, kind + " " + target);
+                var changes = result.getAsJsonObject("pack_changes");
+                if (result.get("total").getAsInt() > 0 || changes != null && WzData.number(changes,"total") > 0)
+                    source(result, kind + " " + target);
             }
             default -> { }
         }

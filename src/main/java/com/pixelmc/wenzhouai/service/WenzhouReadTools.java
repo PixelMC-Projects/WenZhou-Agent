@@ -12,8 +12,6 @@ import net.minecraft.core.RegistryAccess;
 import net.minecraft.world.item.crafting.RecipeManager;
 
 import java.util.concurrent.CompletableFuture;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.regex.Pattern;
 
 /** Structured, read-only game-data lookup used by the server model host. */
@@ -63,7 +61,7 @@ public final class WenzhouReadTools {
         if (id == null || page < 1)
             return CompletableFuture.completedFuture(message("invalid_request", "资源标识或页码无效。"));
         if ("live".equals(mode) && "pack_changes".equals(kind))
-            return server.submit(() -> WzPackChanges.query(server, id, page)).thenCompose(future -> future);
+            return server.submit(() -> WzPackChanges.query(server, id, page, hints.equals("@loot"))).thenCompose(future -> future);
         return server.submit(
                         () -> {
                             if ("recipe".equals(kind) && page == 1) {
@@ -79,7 +77,7 @@ public final class WenzhouReadTools {
                                 }
                             }
                             if ("live".equals(mode) && ("loot_sources".equals(kind) || "loot_table".equals(kind))) {
-                                return WzLoot.query(server, kind, id, page);
+                                return WzLoot.withPackChanges(server, kind, id, page);
                             }
                             if ("live".equals(mode) && "food_effects".equals(kind) && page == 1) {
                                 return CompletableFuture.completedFuture(foodEffects(id));
@@ -87,13 +85,10 @@ public final class WenzhouReadTools {
                             if ("live".equals(mode) && "tag".equals(kind)) {
                                 return CompletableFuture.completedFuture(tag(id, page, hints));
                             }
-                            if ("live".equals(mode) && "recipes_for_item".equals(kind)) {
+                            if ("live".equals(mode) && ("recipes_for_item".equals(kind) || "recipes_using_item".equals(kind))) {
                                 return CompletableFuture.completedFuture(
-                                        recipesForItem(
-                                                server.getRecipeManager(),
-                                                server.registryAccess(),
-                                                id,
-                                                page));
+                                        WzRecipeIndex.get(server.getRecipeManager(), server.registryAccess())
+                                                .page(id, page, kind.equals("recipes_using_item")));
                             }
                             return CompletableFuture.completedFuture(
                                     message("unsupported", "没有这个只读查询。"));
@@ -113,6 +108,17 @@ public final class WenzhouReadTools {
         return ResourceLocation.tryParse(name);
     }
 
+    public static void refreshRecipeIndex(MinecraftServer server) {
+        WzPackChanges.clear();
+        WzRecipeIndex.clear();
+        WzRecipeIndex.get(server.getRecipeManager(), server.registryAccess());
+    }
+
+    public static void clearRecipeIndex() {
+        WzPackChanges.clear();
+        WzRecipeIndex.clear();
+    }
+
     static String itemDisplayName(String name) {
         ResourceLocation id = resourceId(name);
         if (id == null) return null;
@@ -124,34 +130,7 @@ public final class WenzhouReadTools {
 
     static JsonObject recipesForItem(
             RecipeManager manager, RegistryAccess registries, ResourceLocation id, int page) {
-        var item = BuiltInRegistries.ITEM.getOptional(id);
-        if (item.isEmpty()) return message("not_registered", "这个物品 ID 未注册。");
-        var matches = new ArrayList<String>();
-        int unreadable = 0;
-        for (var recipe : manager.getRecipes()) {
-            try {
-                var output = recipe.getResultItem(registries);
-                if (!output.isEmpty() && output.is(item.get()))
-                    matches.add(recipe.getId().toString());
-            } catch (RuntimeException e) {
-                // Custom recipes can lack a static output; the remaining recipes still count.
-                unreadable++;
-            }
-        }
-        matches.sort(Comparator.naturalOrder());
-        long start = (long) (page - 1) * PAGE_SIZE;
-        if (page < 1 || (page > 1 && start >= matches.size()))
-            return message("invalid_page", "页码超出配方范围。");
-        JsonArray ids = new JsonArray();
-        for (int i = (int) start; i < Math.min(start + PAGE_SIZE, matches.size()); i++)
-            ids.add(matches.get(i));
-        JsonObject result = message("live", "仅包含声明此固定产物的已加载配方；其他获取方式要另行核实。");
-        result.addProperty("item", id.toString());
-        result.addProperty("page", page);
-        result.addProperty("total", matches.size());
-        result.addProperty("unreadable", unreadable);
-        result.add("recipe_ids", ids);
-        return result;
+        return WzRecipeIndex.get(manager, registries).page(id, page, false);
     }
 
     static JsonObject foodEffects(ResourceLocation id) {

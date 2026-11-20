@@ -31,7 +31,7 @@ final class WenzhouChat {
             当前配方用于确认材料、工序、中间件和产物；partial 会附上 recipe-json 证据。查不到固定产物或只查到拆分、回拼时，继续查原材料、机器或方块交互，直到找到玩家可以从头操作的获取方式。
             玩家问题中的 [[item:命名空间:路径]] 表示玩家从游戏中选定的物品。查询时直接使用括号里的完整注册 ID，保留引用顺序；同名物品不要互换。向玩家回答时使用物品名称和已有的物品引用格式。
             当前游戏为 Java Edition 1.20.1 / Forge。询问食用效果时，先按 ID 查 food_effects，使用返回的等级、时长和概率；不要套用新版物品组件，也不要由配方推断效果。若中文名查不到，可用已知的英文名称或注册 ID 重新核对。
-            询问箱子、怪物、钓鱼或以物易物的产出时，用 loot_sources 按物品反查，再用 loot_table 按表 ID 核对池、分支条件和数量。需要时追读嵌套表。权重不是掉率，未核对触发条件不能说必掉。表中查不到时仍可能有模组事件、全局掉落修饰器或交互来源。
+            询问箱子、怪物、钓鱼或以物易物的产出时，用 loot_sources 按物品反查，再用 loot_table 按表 ID 核对池、分支条件和数量。需要时追读嵌套表。同时查看回执中的 pack_changes，遇到删除、替换或条件冲突不能仅凭原表断定最终掉落。权重不是掉率，未核对触发条件不能说必掉。表中查不到时仍可能有模组事件、全局掉落修饰器或交互来源。
             遇到机器设置、自动化或特殊交互，先分清规则来自配方、机器设置还是外部设备。若游戏数据不足，使用当前可用的文件查阅工具读直接决定行为的方法体。
             方法列表用于定位。已找到关键方法就先读实现，独立的相关方法可以同轮查询。只在结论仍取决于别处时追查菜单或父类。证据够回答原问题就停止。
             回答管道接法时，分别核对从哪面向哪个槽送料、从哪面取成品。共用库存仍可能限制插入和抽出。开关或转向会改变接法时，按条件说明。
@@ -609,15 +609,16 @@ final class WenzhouChat {
             return error("参数格式无效。");
         }
         String kind = string(args, "kind");
-        if (!Set.of("recipes_for_item", "recipe", "tag", "search_tags", "item_tags", "locate_gameplay", "read_method", "pack_changes",
+        if (!Set.of("recipes_for_item","recipes_using_item", "recipe", "tag", "search_tags", "item_tags", "locate_gameplay", "read_method", "pack_changes",
                 "recipe_origin", "food_effects", "loot_sources", "loot_table").contains(kind))
             return error("没有这个查询。");
         boolean method = kind.equals("read_method");
         if (id.length() > (method ? 1024 : 240) || page < 1) return error("资源 ID 或页码无效。");
         String view = string(args,"view");
         if (args.has("view") && !(method && view.equals("fields"))
-                && !(kind.equals("locate_gameplay") && view.equals("interactions")))
-            return error("read_method 支持 fields；locate_gameplay 支持 interactions。");
+                && !(kind.equals("locate_gameplay") && view.equals("interactions"))
+                && !(kind.equals("pack_changes") && view.equals("loot")))
+            return error("read_method 支持 fields；locate_gameplay 支持 interactions；pack_changes 支持 loot。");
         var hints = new java.util.LinkedHashSet<String>();
         if (args.has("keywords")) {
             if ((!method && !Set.of("tag","search_tags","item_tags").contains(kind)) || !args.get("keywords").isJsonArray()
@@ -629,12 +630,18 @@ final class WenzhouChat {
                 hints.add(value.getAsString().toLowerCase(java.util.Locale.ROOT));
             }
         }
+        String options = switch (view) {
+            case "loot" -> "@loot";
+            case "interactions" -> "@interactions";
+            case "fields" -> "@fields " + String.join(" ",hints);
+            default -> String.join(" ",hints);
+        };
         JsonObject result =
                 lookup.query(
                         "recipe_origin".equals(kind) ? "mod" : "live",
                         "recipe_origin".equals(kind) ? "recipe" : kind,
                         id,
-                        page, view.equals("interactions") ? "@interactions" : (method && view.equals("fields") ? "@fields " : "") + String.join(" ", hints));
+                        page, options);
         if ("recipe".equals(kind) && "partial".equals(string(result, "status"))) {
             String command = "recipe-json " + id;
             result.addProperty("read_command", command);
@@ -669,11 +676,11 @@ final class WenzhouChat {
         return JsonParser.parseString(
                         """
                 [{"type":"function","function":{"name":"query_game",
-                "description":"查询本服生效数据。recipes_for_item 按产物查配方 ID；recipe 读材料和工序；recipe_origin 核对魔改；search_tags 接受标签英文片段，item_tags 按物品反查，tag 读完整成员；locate_gameplay 接受 modid:物品路径 或 modid:类名，定位安装包中的方法和注册符号；food_effects 查默认栈食用效果；loot_sources 按物品反查战利品表，loot_table 查表定义。",
+                "description":"查询本服生效数据。recipes_for_item 按主产物及已适配副产物反查；recipes_using_item 由材料或工具查用途；recipe 读材料和工序；recipe_origin 核对魔改；search_tags 接受标签英文片段，item_tags 按物品反查，tag 读完整成员；locate_gameplay 接受 modid:物品路径 或 modid:类名，定位安装包中的方法和注册符号；food_effects 查默认栈食用效果；loot_sources 按物品反查战利品表，loot_table 查表定义。",
                 "parameters":{"type":"object","properties":{
-                "kind":{"type":"string","enum":["recipes_for_item","recipe","recipe_origin","tag","search_tags","item_tags","locate_gameplay","read_method","pack_changes","food_effects","loot_sources","loot_table"]},
+                "kind":{"type":"string","enum":["recipes_for_item","recipes_using_item","recipe","recipe_origin","tag","search_tags","item_tags","locate_gameplay","read_method","pack_changes","food_effects","loot_sources","loot_table"]},
                 "keywords":{"type":"array","maxItems":6,"items":{"type":"string"},"description":"标签的排序线索；read_method 按任一关键词查指令及同类回调，返回命中附近代码，可用原名或映射名。"},
-                "view":{"type":"string","enum":["fields","interactions"],"description":"locate_gameplay 以物品完整 ID 和 interactions 反查本模组的实体交互/变体候选及方法编号；read_method 的 fields 列字段访问和 CompoundTag 调用。"},
+                "view":{"type":"string","enum":["fields","interactions","loot"],"description":"locate_gameplay 的 interactions 查交互，未命中会退回普通符号定位。read_method 的 fields 列字段访问。pack_changes 的 loot 查看战利品修改或继续翻页。"},
                 "id":{"type":"string","description":"资源 ID、标签片段、modid:类名，或 read_method 使用 locate_gameplay 返回的 method_id。pack_changes 按完整资源 ID 查本包修改。"},
                 "page":{"type":"integer","minimum":1,"description":"标签或产物查询的页码，默认 1"}},
                 "required":["kind","id"],"additionalProperties":false}}},

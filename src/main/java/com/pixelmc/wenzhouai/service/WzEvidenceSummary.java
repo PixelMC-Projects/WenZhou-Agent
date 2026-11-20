@@ -36,17 +36,18 @@ record WzEvidenceSummary(String outcome, String detail) {
                             if (count == 0) yield new WzEvidenceSummary("未找到", "本服物品中没有匹配项");
                             yield new WzEvidenceSummary("已查阅", "找到 " + count + " 项候选物品");
                         }
+                        case "recipes_using_item" -> new WzEvidenceSummary("已核对", "材料或工具匹配 " + number(result, "total") + " 项");
                         case "recipes_for_item" ->
                                 new WzEvidenceSummary(
                                         "已核对",
-                                        "本服已加载配方 · 固定产物匹配 "
+                                        "本服已加载配方 · 产物匹配 "
                                                 + Math.max(0, number(result, "total"))
                                                 + " 项"
                                                 + (number(result, "unreadable") > 0
                                                         ? " · 部分动态产出未核实"
                                                         : ""));
                         case "search_tags", "item_tags" -> new WzEvidenceSummary("已查阅", "本服标签匹配 " + number(result, "total") + " 项");
-                        case "item_overview" -> new WzEvidenceSummary("已核对", "引用物品与已加载的固定产物配方");
+                        case "item_overview" -> new WzEvidenceSummary("已核对", "引用物品与已加载的产物配方");
                         case "food_effects" -> new WzEvidenceSummary("已读取", "本服默认物品栈的食用属性");
                         case "loot_sources" -> new WzEvidenceSummary("已查阅", "战利品候选表 · " + number(result, "total") + " 张");
                         case "loot_table" -> new WzEvidenceSummary("已读取", "本服战利品表定义 · 第 " + number(result, "page") + " 页");
