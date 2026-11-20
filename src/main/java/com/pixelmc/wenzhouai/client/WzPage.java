@@ -487,7 +487,9 @@ public final class WzPage implements HubWenzhouAgreement.Host {
         draw.roundRect(X, pickerY, W, h, 15, solidPaper);
         draw.strokeRoundRect(X + .5f, pickerY + .5f, W - 1, h - 1, 15, 1, rule);
         HubTextEditor query = picker.query;
-        query.layout(value -> width(value, 15), W - 35, 25, 22);
+        // Editing between frames still needs the renderer's font metrics.
+        HubDraw renderer = draw;
+        query.layout(value -> renderer.textWidth(value, 15, false), W - 35, 25, 22);
         float qx = X + 16;
         draw.save();
         draw.clipRoundRect(qx, pickerY + 6, W - 35, 30, 0);
