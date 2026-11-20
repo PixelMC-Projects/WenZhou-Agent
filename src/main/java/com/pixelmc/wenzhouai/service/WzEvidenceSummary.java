@@ -7,6 +7,11 @@ import com.google.gson.JsonObject;
 record WzEvidenceSummary(String outcome, String detail) {
     static WzEvidenceSummary from(String mode, String kind, JsonObject result) {
         String status = string(result, "status");
+        if ("memory".equals(mode) && status.isEmpty()) {
+            if (result.has("matches")) return new WzEvidenceSummary("已检索", "匹配 " + number(result, "total") + " 条玩法笔记");
+            if (result.has("saved")) return new WzEvidenceSummary("已更新", "已保存到当前整合包档案");
+            return new WzEvidenceSummary("已读取", "当前整合包的玩法笔记");
+        }
         return switch (status) {
             case "calculated" -> new WzEvidenceSummary("已计算",
                     string(result, "expression") + " = " + string(result, "result"));
@@ -32,6 +37,8 @@ record WzEvidenceSummary(String outcome, String detail) {
                                                 + (number(result, "unreadable") > 0
                                                         ? " · 部分动态产出未核实"
                                                         : ""));
+                        case "search_tags", "item_tags" -> new WzEvidenceSummary("已查阅", "本服标签匹配 " + number(result, "total") + " 项");
+                        case "item_overview" -> new WzEvidenceSummary("已核对", "引用物品与已加载的固定产物配方");
                         case "food_effects" -> new WzEvidenceSummary("已读取", "本服默认物品栈的食用属性");
                         case "loot_sources" -> new WzEvidenceSummary("已查阅", "战利品候选表 · " + number(result, "total") + " 张");
                         case "loot_table" -> new WzEvidenceSummary("已读取", "本服战利品表定义 · 第 " + number(result, "page") + " 页");

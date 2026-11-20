@@ -42,6 +42,10 @@ final class WenzhouCommands {
                         return thread;
                     });
 
+    static CompletableFuture<JsonObject> locate(String target, int page) {
+        return WzGameplayLocator.query(target, page, WORKER);
+    }
+
     static CompletableFuture<JsonObject> run(MinecraftServer server, String line) {
         if (line != null && line.startsWith("shell ")) {
             if (!WzShell.available()) return done("unavailable", "当前实例未启用玩法资料沙箱。");

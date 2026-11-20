@@ -8,6 +8,12 @@ Forge 1.20.1 客户端和专用服务端均安装问舟与 PixelMC Hub 0.5.5-dev
 
 在 Manager 的「问舟AI → 服务管理」配置模型和本服协议，再从「玩家权限」授予访问权限。独立后台需要兼容的 Manager Service 0.9.0-dev.web.5；配置模板见 [wenzhouai-admin.properties.example](wenzhouai-admin.properties.example)。可选的模组代码查阅环境见 [沙箱安装说明](sandbox/README.md)。
 
+## 玩法查询和共享笔记
+
+服务端可按关键词查生效物品标签、反查物品所属标签，按所装模组中的物品或类名定位相关方法。显式引用的物品会在提问时预读当前固定产物配方。交互和动态掉落仍需查阅实现或生效数据。
+
+问舟用 `search_memory` 按关键词分页返回编号和概况，用 `read_memory` 读取所选笔记，用 `save_memory` 凭本次工具证据保存。每条以资源 ID 和玩法方面作为唯一键，服务端记录日期，并按 Manager 的服务器、存档、整合包名称和版本隔离。服务端数据位于 `config/wenzhouai/memory/<档案摘要>/memory.md`，每行一条 JSON 笔记。备份时保留整个目录。Manager 未确认当前包版本时，玩法查询仍可使用，笔记暂停访问。
+
 ## 构建
 
 使用 JDK 17。先构建相应版本 Hub 和 Manager 的 Forge 工程，再构建问舟。默认目录结构如下。

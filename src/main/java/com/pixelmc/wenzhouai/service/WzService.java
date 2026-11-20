@@ -293,6 +293,7 @@ public final class WzService {
     }
 
     private static final class Runtime {
+        private final WzGameplayMemory gameplayMemory = new WzGameplayMemory(SETTINGS.getParent().resolve("memory"));
         final MinecraftServer server;
         final WzSettings settings = new WzSettings(SETTINGS);
         final WzHistory history;
@@ -842,6 +843,7 @@ public final class WzService {
                                 WzNetwork.event(server, player, generation, event);
                             });
             WzReply rich = new WzReply(WenzhouReadTools::itemDisplayName);
+            WzTurnNotes notes = new WzTurnNotes(gameplayMemory, player);
             JsonArray events = new JsonArray();
             String effort = settings.reasoning();
             String thoughtId = UUID.randomUUID().toString();
@@ -878,6 +880,13 @@ public final class WzService {
                                                 case "recipe" -> "当前配方";
                                                 case "recipes_for_item" -> "产物配方";
                                                 case "tag" -> "物品标签";
+                                                case "search_tags" -> "相关物品标签";
+                                                case "item_tags" -> "物品所属标签";
+                                                case "locate_gameplay" -> "交互方法与注册引用";
+                                                case "item_overview" -> "引用物品与生效配方";
+                                                case "search_memory" -> "玩法笔记目录";
+                                                case "read_memory" -> "玩法笔记";
+                                                case "save_memory" -> "玩法笔记保存结果";
                                                 case "food_effects" -> "食用效果「" + target + "」";
                                                 case "loot_sources" -> "掉落来源「" + target + "」";
                                                 case "loot_table" -> "战利品表「" + target + "」";
@@ -892,7 +901,8 @@ public final class WzService {
                                             switch (kind) {
                                                 case "recipe", "recipes_for_item" -> "bench";
                                                 case "calculate" -> "calculator";
-                                                case "find_item", "tag", "food_effects", "loot_sources", "loot_table" -> "book";
+                                                case "find_item", "tag", "food_effects", "loot_sources", "loot_table",
+                                                        "search_tags", "item_tags", "item_overview", "search_memory", "read_memory", "save_memory" -> "book";
                                                 default -> "command";
                                             };
                                     boolean command = kind.equals("command");
@@ -907,7 +917,9 @@ public final class WzService {
                                                 command ? commandLabel : calculation ? "正在计算" + subject : "正在查阅" + subject,
                                                 icon,
                                                 "");
-                                    JsonObject evidence = calculation
+                                    JsonObject evidence = "memory".equals(mode)
+                                            ? notes.execute(kind, com.google.gson.JsonParser.parseString(target).getAsJsonObject())
+                                            : calculation
                                             ? WzCalculator.calculate(target)
                                             : server.submit(
                                                             () -> {
@@ -927,6 +939,7 @@ public final class WzService {
                                     check(player, generation);
                                     stopHidden(session);
                                     rich.collect(mode, kind, target, evidence);
+                                    notes.observe(kind, target, evidence);
                                     WzEvidenceSummary summary =
                                             WzEvidenceSummary.from(mode, kind, evidence);
                                     publicEvent(
@@ -942,7 +955,7 @@ public final class WzService {
                                     return evidence;
                                 },
                                 usage,
-                                !confirmed && !context.isEmpty());
+                                !confirmed && !context.isEmpty(), true);
             } catch (WenzhouChat.TopicConfirmation requested) {
                 topic = true;
             } catch (InterruptedException cancelled) {

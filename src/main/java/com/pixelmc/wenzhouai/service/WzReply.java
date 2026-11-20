@@ -29,6 +29,14 @@ final class WzReply {
     }
 
     void collect(String mode, String kind, String id, JsonObject evidence) {
+        if ("item_overview".equals(kind) && evidence.has("items")) {
+            for (var element : evidence.getAsJsonArray("items")) {
+                var row = element.getAsJsonObject();
+                if (row.has("detail"))
+                    collect("live", "recipe", row.getAsJsonArray("recipe_ids").get(0).getAsString(), row.getAsJsonObject("detail"));
+            }
+            return;
+        }
         JsonObject displayed = new JsonObject();
         String status = string(evidence, "status");
         if ("live".equals(mode) && "recipe".equals(kind) && "live".equals(status)) {

@@ -45,6 +45,13 @@ public final class WenzhouReadTools {
                 });
             }, net.minecraft.Util.backgroundExecutor()).exceptionally(ex -> message("unavailable", "本次物品索引未能完成；已有确切 ID 时可直接查配方。"));
         }
+        if ("live".equals(mode) && "locate_gameplay".equals(kind))
+            return WenzhouCommands.locate(name, page);
+        if ("live".equals(mode) && ("search_tags".equals(kind) || "item_tags".equals(kind)))
+            return server.submit(() -> WzItemEvidence.tags(kind, name, page));
+        if ("live".equals(mode) && "item_overview".equals(kind))
+            return server.submit(() -> WzItemEvidence.overview(server.getRecipeManager(), server.registryAccess(), name))
+                    .exceptionally(ex -> message("unavailable", "本次预读未完成，可按物品 ID 单独查阅。"));
         ResourceLocation id = resourceId(name);
         if (id == null || page < 1)
             return CompletableFuture.completedFuture(message("invalid_request", "资源标识或页码无效。"));
