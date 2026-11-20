@@ -7,6 +7,8 @@ import com.google.gson.JsonObject;
 record WzEvidenceSummary(String outcome, String detail) {
     static WzEvidenceSummary from(String mode, String kind, JsonObject result) {
         String status = string(result, "status");
+        if (kind.equals("skip_memory") && result.has("skipped"))
+            return new WzEvidenceSummary("未写入", "未写入 · " + string(result, "skipped"));
         if ("memory".equals(mode) && !status.isEmpty())
             return new WzEvidenceSummary("记忆操作未完成", string(result, "message"));
         if ("pack_changes".equals(status))

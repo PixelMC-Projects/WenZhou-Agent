@@ -1,0 +1,33 @@
+// ForgeGradle already creates this exact-version named-to-SRG table for reobfuscation.
+def sourceTable = layout.buildDirectory.file('createMcpToSrg/output.tsrg')
+def aliases = layout.buildDirectory.file('generated/wenzhou-names/forge-1.20.1.tsv')
+def generateNames = tasks.register('wenzhouGameplayNames') {
+    dependsOn 'createMcpToSrg'
+    inputs.file(sourceTable)
+    outputs.file(aliases)
+    doLast {
+        Map<String, String> names = new TreeMap<>()
+        boolean gameplay = false
+        sourceTable.get().asFile.eachLine('UTF-8') { line ->
+            if (!line.startsWith('\t')) {
+                gameplay = line.startsWith('net/minecraft/') && !line.startsWith('net/minecraft/client/')
+            } else if (gameplay && !line.startsWith('\t\t')) {
+                def fields = line.trim().split(/\s+/)
+                def symbol = fields.last()
+                if (symbol ==~ /[mf]_\d+_/) {
+                    names.merge(symbol, fields[0]) { a, b -> a == b ? a : '' }
+                }
+            }
+        }
+        if (names['m_21206_'] != 'getOffhandItem') throw new GradleException('Unexpected gameplay mappings')
+        def file = aliases.get().asFile
+        file.parentFile.mkdirs()
+        file.withWriter('UTF-8') { out ->
+            names.each { symbol, name -> if (name) out.writeLine(symbol + '\t' + name) }
+        }
+    }
+}
+tasks.named('processResources') {
+    dependsOn generateNames
+    from(aliases) { into 'wenzhouai/mappings' }
+}

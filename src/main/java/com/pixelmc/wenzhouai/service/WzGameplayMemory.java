@@ -35,7 +35,7 @@ final class WzGameplayMemory {
         return root.resolve(digest(JSON.toJson(scope.parts()))).resolve("memory.md");
     }
 
-    private static String digest(String s) {
+    static String digest(String s) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
         } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }

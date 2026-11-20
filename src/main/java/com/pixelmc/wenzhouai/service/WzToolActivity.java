@@ -25,6 +25,7 @@ record WzToolActivity(String action, String target, String icon) {
             case "search_memory" -> new WzToolActivity("检索记忆库", keywords(args), "memory-search");
             case "read_memory" -> new WzToolActivity("检索记忆正文", selectedSummary.isEmpty() ? "所选条目" : selectedSummary, "memory-read");
             case "save_memory" -> new WzToolActivity("保存记忆", string(args, "summary"), "memory-write");
+            case "skip_memory" -> new WzToolActivity("确认记忆", "", "memory-write");
             case "calculate" -> new WzToolActivity("计算", purpose, "calculator");
             case "command" -> new WzToolActivity("运行命令", purpose, "command");
             default -> new WzToolActivity("查阅玩法资料", "", "book");

@@ -66,16 +66,18 @@ final class WzCompletionStream implements Flow.Subscriber<String> {
                         tool.name.append(string(fn, "name"));
                         tool.arguments.append(string(fn, "arguments"));
                     }
-                    if (!tools.isEmpty()) preview.reset();
+                    if (preview != null && !tools.isEmpty()) preview.reset();
                 }
                 String fragment = string(delta, "content");
                 content.append(fragment);
-                if (!fragment.isEmpty() && tools.isEmpty()) preview.append(fragment);
+                if (preview != null && !fragment.isEmpty() && tools.isEmpty()) preview.append(fragment);
                 String reason = string(choice, "finish_reason");
                 if (!reason.isEmpty()) {
                     finish = reason;
-                    if (reason.equals("stop") && tools.isEmpty()) preview.flush();
-                    else preview.reset();
+                    if (preview != null) {
+                        if (reason.equals("stop") && tools.isEmpty()) preview.flush();
+                        else preview.reset();
+                    }
                 }
             }
         } catch (RuntimeException malformed) {

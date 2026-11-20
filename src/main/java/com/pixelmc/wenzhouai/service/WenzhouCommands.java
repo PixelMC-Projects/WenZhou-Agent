@@ -46,8 +46,8 @@ final class WenzhouCommands {
         return WzGameplayLocator.query(target, page, WORKER);
     }
 
-    static CompletableFuture<JsonObject> method(String target, int page) {
-        return WzMethodEvidence.query(target, page, WORKER);
+    static CompletableFuture<JsonObject> method(String target, int page, String options) {
+        return WzMethodEvidence.query(target, page, options, WORKER);
     }
 
     static CompletableFuture<JsonObject> run(MinecraftServer server, String line) {

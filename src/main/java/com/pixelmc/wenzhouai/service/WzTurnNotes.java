@@ -16,6 +16,7 @@ final class WzTurnNotes {
     private final Set<String> subjects = new LinkedHashSet<>();
     private final List<String> sources = new ArrayList<>();
     private final Map<String, String> listedSummaries = new HashMap<>();
+    private final LinkedHashMap<String,String> methodRefs = new LinkedHashMap<>();
     private final java.util.concurrent.CompletableFuture<WzGameplayMemory.Scope> initialScope;
     private long lastScopeCheck = System.nanoTime();
 
@@ -39,11 +40,53 @@ final class WzTurnNotes {
     private void subject(String type, String id) {
         if (WenzhouReadTools.resourceId(id) != null) subjects.add(type + "/" + id);
     }
+    private void rememberMethod(String id, String label) {
+        if (id.isEmpty()) return;
+        methodRefs.remove(id);
+        methodRefs.put(id, label);
+        if (methodRefs.size() > 3) methodRefs.remove(methodRefs.keySet().iterator().next());
+    }
+
+    JsonObject methodRefs() {
+        var refs = new JsonObject();
+        methodRefs.forEach(refs::addProperty);
+        return refs;
+    }
+
+    static String followupRefs(List<JsonObject> recent) {
+        var kept = new LinkedHashMap<String,String>();
+        for (var turn : recent) {
+            var refs = turn.get("methodRefs");
+            if (refs == null || !refs.isJsonObject()) continue;
+            for (var entry : refs.getAsJsonObject().entrySet()) {
+                String id = entry.getKey();
+                if (!WzMethodEvidence.current(id)) continue;
+                kept.remove(id);
+                kept.put(id, entry.getValue().getAsString());
+            }
+        }
+        while (kept.size() > 3) kept.remove(kept.keySet().iterator().next());
+        var text = new StringBuilder();
+        kept.forEach((id, label) -> text.append("\n").append(label).append(" → ").append(id));
+        return text.isEmpty() ? "" : "\n\n本会话可复查的代码位置（read_method）：" + text;
+    }
     void observe(String kind, String target, JsonObject result) {
         String status = string(result, "status");
+        if (kind.equals("calculate") && status.equals("calculated")) {
+            source(result, "calculate " + string(result, "expression") + " = " + string(result, "result"));
+            return;
+        }
+        if (kind.equals("command") && status.equals("sandbox_output") && result.has("exit_code")
+                && WzData.number(result, "exit_code") == 0 && !WzData.flag(result, "truncated")
+                && !WzData.flag(result, "time_limit_reached") && !string(result, "output").isBlank()) {
+            // Keep a fingerprint of the queried evidence without copying shell text into shared notes.
+            source(result, "shell sha256 " + WzGameplayMemory.digest(target + "\n" + string(result, "output")));
+            return;
+        }
         if (kind.equals("tag") && result.has("suggestions"))
             observe("search_tags", target, result.getAsJsonObject("suggestions"));
         if (kind.equals("read_method") && status.equals("installed_code")) {
+            rememberMethod(target, "已读取 " + string(result, "method"));
             source(result, "method " + string(result, "class") + "." + string(result, "method") + string(result, "descriptor"));
             return;
         }
@@ -55,6 +98,11 @@ final class WzTurnNotes {
             return;
         }
         if (kind.equals("locate_gameplay") && status.equals("installed_code")) {
+            var candidates = result.getAsJsonArray("methods");
+            if (!candidates.isEmpty()) {
+                var first = candidates.get(0).getAsJsonObject();
+                rememberMethod(string(first, "method_id"), "定位候选 " + target + " · " + string(first, "method"));
+            }
             for (var entry : result.getAsJsonArray("methods")) {
                 var row = entry.getAsJsonObject();
                 source(row, "method " + string(row, "class") + "." + string(row, "method")
@@ -98,6 +146,19 @@ final class WzTurnNotes {
     }
 
     JsonObject execute(String action, JsonObject args) throws InterruptedException {
+        if (action.equals("skip_memory")) {
+            String reason = switch (string(args, "reason")) {
+                case "no_new_fact" -> "没有新增的可复用结论";
+                case "insufficient_evidence" -> "证据不足";
+                case "not_gameplay" -> "本轮无需记录玩法";
+                case "storage_unavailable" -> "本轮未能保存";
+                default -> "";
+            };
+            if (reason.isEmpty() || args.size() != 1) return WzGameplayMemory.error("请选择本轮跳过记忆的原因。");
+            var receipt = new JsonObject();
+            receipt.addProperty("skipped", reason);
+            return receipt;
+        }
         try {
             // Manager provides the active archive, pack name and version using the authenticated player.
             var scope = initialScope.get(6, TimeUnit.SECONDS);

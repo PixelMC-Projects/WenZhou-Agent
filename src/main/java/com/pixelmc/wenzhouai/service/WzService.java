@@ -643,6 +643,7 @@ public final class WzService {
                 for (var entry : messages) {
                     JsonObject turn = entry.getAsJsonObject();
                     turn.remove("answerText");
+                    turn.remove("methodRefs");
                     turn.remove("topicResolvedToken");
                     turn.remove("topicMoved");
                 }
@@ -772,10 +773,14 @@ public final class WzService {
                         JsonObject turn = element.getAsJsonObject();
                         if (turn.has("reply")) completedTurns.add(turn);
                     });
-            for (int i = Math.max(0, completedTurns.size() - 4); i < completedTurns.size(); i++) {
-                JsonObject turn = completedTurns.get(i);
+            var recent = completedTurns.subList(Math.max(0, completedTurns.size() - 4), completedTurns.size());
+            for (var turn : recent) {
                 context.add(message("user", string(turn, "question")));
                 context.add(message("assistant", string(turn, "answerText")));
+            }
+            if (!recent.isEmpty()) {
+                var lastAnswer = context.get(context.size() - 1).getAsJsonObject();
+                lastAnswer.addProperty("content", string(lastAnswer, "content") + WzTurnNotes.followupRefs(recent));
             }
             String apiKey = key();
             long questionTime = choice == null ? createdAt : number(choice.turn, "createdAt");
@@ -972,6 +977,8 @@ public final class WzService {
                             summary.isEmpty() ? "已思考" : "思考 · " + summary, "", "");
                 }
                 turn.addProperty("answerText", rich.answerText(completed.answer()));
+                var methodRefs = notes.methodRefs();
+                if (methodRefs.size() > 0) turn.add("methodRefs", methodRefs);
                 turn.add("reply", rich.render(completed.answer()));
                 if (choice != null) {
                     turn.addProperty("topicResolvedToken", token);
@@ -1099,6 +1106,7 @@ public final class WzService {
             JsonObject result = turn.deepCopy();
             result.remove("question");
             result.remove("answerText");
+            result.remove("methodRefs");
             result.remove("topicResolvedToken");
             result.remove("topicMoved");
             if (turn.has("failure") && !flag(turn, "stopped")) result.addProperty("error", string(turn, "failure"));

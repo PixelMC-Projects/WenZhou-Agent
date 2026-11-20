@@ -53,7 +53,7 @@ public final class WenzhouReadTools {
         if ("live".equals(mode) && "locate_gameplay".equals(kind))
             return WenzhouCommands.locate(name, page);
         if ("live".equals(mode) && "read_method".equals(kind))
-            return WenzhouCommands.method(name, page);
+            return WenzhouCommands.method(name, page, hints);
         if ("live".equals(mode) && ("search_tags".equals(kind) || "item_tags".equals(kind)))
             return server.submit(() -> WzItemEvidence.tags(kind, name, page, hints));
         if ("live".equals(mode) && "item_overview".equals(kind))

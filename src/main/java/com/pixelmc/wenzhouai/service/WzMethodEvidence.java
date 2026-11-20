@@ -14,27 +14,43 @@ import java.util.regex.Pattern;
 import java.util.zip.ZipFile;
 
 final class WzMethodEvidence {
-    private static final Pattern HANDLE = Pattern.compile("([a-z][a-z0-9_]{1,63}):([A-Za-z0-9_$]+(?:\\.[A-Za-z0-9_$]+)*)#([0-9a-f-]{36})@(\\d{1,6})");
+    private static final Pattern HANDLE = Pattern.compile("([a-z][a-z0-9_]{1,63}):([A-Za-z0-9_$]+(?:\\.[A-Za-z0-9_$]+)*)#([0-9a-f-]{36})@(\\d{1,6})!([a-f0-9]{64})");
     private static final int PAGE = 100;
 
     static String key(String name, String descriptor) {
         return UUID.nameUUIDFromBytes((name + descriptor).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
     }
-    static CompletableFuture<JsonObject> query(String handle, int page, Executor worker) {
+    static boolean current(String handle) {
+        var parsed = HANDLE.matcher(handle);
+        if (!parsed.matches()) return false;
+        var mod = ModList.get().getModFileById(parsed.group(1));
+        try {
+            return mod != null && parsed.group(5).equals(WzJarFingerprint.of(mod.getFile().getFilePath()));
+        } catch (IOException unreadable) { return false; }
+    }
+
+    static CompletableFuture<JsonObject> query(String handle, int page, String options, Executor worker) {
         var parsed = HANDLE.matcher(handle);
         if (!parsed.matches() || page < 1) return CompletableFuture.completedFuture(error("无效的方法编号。"));
         var mod = ModList.get().getModFileById(parsed.group(1));
         if (mod == null) return CompletableFuture.completedFuture(error("未安装对应模组。"));
         try {
             return CompletableFuture.supplyAsync(() -> {
-                try { return read(mod.getFile().getFilePath(), parsed.group(2), parsed.group(3),
-                        Integer.parseInt(parsed.group(4)), page); }
+                try {
+                    Path jar = mod.getFile().getFilePath();
+                    if (!WzJarFingerprint.of(jar).equals(parsed.group(5))) return error("安装包已经更换，请重新定位。");
+                    return read(jar, parsed.group(2), parsed.group(3), Integer.parseInt(parsed.group(4)), page, options);
+                }
                 catch (IOException | RuntimeException e) { return error("方法无法读取，请重新定位。"); }
             }, worker);
         } catch (RejectedExecutionException busy) { return CompletableFuture.completedFuture(error("代码查阅繁忙。")); }
     }
 
     static JsonObject read(Path jar, String owner, String key, int hitLine, int page) throws IOException {
+        return read(jar, owner, key, hitLine, page, "");
+    }
+
+    static JsonObject read(Path jar, String owner, String key, int hitLine, int page, String options) throws IOException {
         try (var zip = new ZipFile(jar.toFile())) {
             var entry = zip.getEntry(owner.replace('.', '/') + ".class");
             if (entry == null || entry.getSize() <= 0 || entry.getSize() > 2_000_000) return error("类不在当前安装包。");
@@ -42,6 +58,7 @@ final class WzMethodEvidence {
             try (var input = zip.getInputStream(entry)) { new ClassReader(input).accept(type, ClassReader.SKIP_FRAMES); }
             for (var method : type.methods) {
                 if (!key(method.name, method.desc).equals(key)) continue;
+                if (!options.isEmpty()) return WzMethodSearch.search(type, method, options, page);
                 List<String> lines = new ArrayList<>();
                 Map<LabelNode,Integer> labels = new IdentityHashMap<>();
                 int focus = 0;
@@ -77,9 +94,9 @@ final class WzMethodEvidence {
         return error("该版本没有这个方法。");
     }
 
-    private static String operand(AbstractInsnNode insn, Map<LabelNode,Integer> labels) {
-        if (insn instanceof MethodInsnNode m) return m.owner + "." + m.name + m.desc;
-        if (insn instanceof FieldInsnNode f) return f.owner + "." + f.name + " " + f.desc;
+    static String operand(AbstractInsnNode insn, Map<LabelNode,Integer> labels) {
+        if (insn instanceof MethodInsnNode m) return m.owner + "." + WzNamedSymbols.display(m.owner, m.name) + m.desc;
+        if (insn instanceof FieldInsnNode f) return f.owner + "." + WzNamedSymbols.display(f.owner, f.name) + " " + f.desc;
         if (insn instanceof JumpInsnNode j) return String.valueOf(labels.get(j.label));
         if (insn instanceof IntInsnNode n) return Integer.toString(n.operand);
         if (insn instanceof VarInsnNode v) return Integer.toString(v.var);
@@ -87,7 +104,7 @@ final class WzMethodEvidence {
         if (insn instanceof TypeInsnNode t) return t.desc;
         if (insn instanceof LdcInsnNode c) {
             String s = String.valueOf(c.cst);
-            return c.cst instanceof String && !s.matches("[a-z0-9_.:/-]{1,120}") ? "[text]" : s;
+            return c.cst instanceof String && !s.matches("[A-Za-z0-9_.:/-]{1,120}") ? "[text]" : s;
         }
         if (insn instanceof InvokeDynamicInsnNode d) return d.name + d.desc;
         if (insn instanceof MultiANewArrayInsnNode a) return a.desc + " " + a.dims;

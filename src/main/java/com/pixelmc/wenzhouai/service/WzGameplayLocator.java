@@ -30,11 +30,12 @@ final class WzGameplayLocator {
             return CompletableFuture.supplyAsync(() -> {
                 try {
                     var result = locate(jar, parts[1], page);
+                    String sha = WzJarFingerprint.of(jar);
                     if (result.has("methods")) for (var entry : result.getAsJsonArray("methods")) {
                         var row = entry.getAsJsonObject();
                         row.addProperty("method_id", parts[0] + ":" + row.get("class").getAsString() + "#"
                                 + WzMethodEvidence.key(row.get("method").getAsString(), row.get("descriptor").getAsString())
-                                + "@" + (row.has("line") ? row.get("line").getAsInt() : 0));
+                                + "@" + (row.has("line") ? row.get("line").getAsInt() : 0) + "!" + sha);
                     }
                     return result;
                 }
