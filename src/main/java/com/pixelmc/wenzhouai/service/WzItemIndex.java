@@ -59,6 +59,13 @@ final class WzItemIndex {
                 || label.equals(item.displayName()) || item.chinese().contains(label) || item.english().contains(label);
     }
 
+    String localizedName(String id) {
+        Candidate row = byId.get(id);
+        if (row == null) return null;
+        Entry item = row.item();
+        return item.chinese().isEmpty() ? item.displayName() : item.chinese().get(0);
+    }
+
     JsonObject find(String query) {
         if (!valid(query)) return WzData.error("请输入有效的物品名称或注册 ID。");
         String input = query.strip();

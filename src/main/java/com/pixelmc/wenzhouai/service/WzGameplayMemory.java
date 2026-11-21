@@ -93,17 +93,27 @@ final class WzGameplayMemory {
         JsonObject note = load(file(scope)).get(id);
         if (note == null) return error("当前整合包档案没有这条笔记。");
         JsonObject result = note.deepCopy();
+        result.addProperty("evidenceBound", WzData.flag(note, "evidenceBound"));
         result.addProperty("pack", scope.pack);
         result.addProperty("version", scope.version);
         return result;
     }
 
-    synchronized JsonObject save(Scope scope, String subject, String facet, String summary, String detail,
-                                 List<String> keywords, List<String> sources) throws IOException {
-        var issues = new LinkedHashMap<String,String>();
-        validateText(issues, subject, facet, summary, detail, keywords);
-        if (sources.isEmpty() || sources.size() > 6) issues.put("sources", "需要 1–6 个不同来源，优先选 1–3 个。");
-        if (!issues.isEmpty()) return invalidFields(issues);
+    synchronized JsonObject save(Scope scope, List<WzMemoryFacts.Fact> facts) throws IOException {
+        if (facts.isEmpty() || facts.size() > 6)
+            return invalid("facts", "需要 1–6 个事实。");
+        var first = facts.get(0);
+        String subject = first.subject();
+        String facet = first.facet();
+        if (WzMemoryFacts.subject(subject).isEmpty() || !validFacet(facet))
+            return invalid("facts", "事实主题或方面无效。");
+        if (facts.stream().anyMatch(fact -> !subject.equals(fact.subject()) || !facet.equals(fact.facet())
+                || !plain(fact.summary(), 48) || !plain(fact.detail(), 240) || !plain(fact.provenance(), 640)))
+            return invalid("facts", "所选事实须属于同一主题和方面。");
+        String summary = first.summary();
+        String detail = String.join(" ", facts.stream().map(WzMemoryFacts.Fact::detail).distinct().toList());
+        if (!plain(detail, 240)) return invalid("facts", "事实正文合计超过 240 字，请减少选中的事实。");
+        List<String> sources = facts.stream().map(WzMemoryFacts.Fact::provenance).distinct().toList();
         Path path = file(scope);
         Map<String, JsonObject> notes = load(path);
         String id = digest(JSON.toJson(scope.parts()) + "\n" + subject + "\n" + facet).substring(0, 20);
@@ -116,11 +126,21 @@ final class WzGameplayMemory {
         note.addProperty("facet", facet);
         note.addProperty("summary", summary.strip());
         note.addProperty("detail", detail.strip());
-        // Preserve previous search aliases when refreshing the same fact.
-        Set<String> aliases = new LinkedHashSet<>(keywords);
-        if (notes.containsKey(id)) notes.get(id).getAsJsonArray("keywords").forEach(k -> aliases.add(k.getAsString()));
+        Set<String> aliases = new LinkedHashSet<>();
+        String resource = subject.substring(subject.indexOf('/') + 1);
+        if (plain(resource, 48)) aliases.add(resource);
+        if (subject.startsWith("item/")) {
+            String name = WenzhouReadTools.itemDisplayName(resource);
+            if (name != null && plain(name, 48)) aliases.add(name);
+        }
+        var previous = notes.get(id);
+        if (previous != null && WzData.flag(previous, "evidenceBound"))
+            WzMemoryFacts.array(previous, "keywords").forEach(k -> {
+                if (k instanceof JsonPrimitive p && p.isString() && plain(p.getAsString(), 48)) aliases.add(p.getAsString());
+            });
         note.add("keywords", JSON.toJsonTree(aliases.stream().limit(16).toList()));
         note.add("sources", JSON.toJsonTree(sources));
+        note.addProperty("evidenceBound", true);
         note.addProperty("createdAt", notes.containsKey(id) ? string(notes.get(id), "createdAt") : now);
         note.addProperty("updatedAt", now);
         notes.put(id, note);
@@ -146,6 +166,7 @@ final class WzGameplayMemory {
         }
         result.addProperty("saved", id);
         result.addProperty("created", created);
+        result.addProperty("summary", summary);
         return result;
     }
 
@@ -157,24 +178,7 @@ final class WzGameplayMemory {
         return !text.isBlank() && text.length() <= max && text.chars().noneMatch(Character::isISOControl)
                 && !text.contains("[[") && !text.contains("://");
     }
-    static void validateText(Map<String,String> issues, String subject, String facet, String summary, String detail, List<String> keywords) {
-        if (!FACETS.contains(facet)) issues.putIfAbsent("facet", "请选择 obtain、uses、operation、conditions、effects 或 drops。");
-        if (!subject.matches("(item|tag|biome_tag|entity|recipe|loot_table)/[a-z0-9_.-]+:[a-z0-9_./-]+"))
-            issues.putIfAbsent("subject", "需要已核实的完整资源 ID。");
-        checkText(issues, "summary", summary, 48);
-        checkText(issues, "detail", detail, 240);
-        if (keywords.size() > 6) issues.putIfAbsent("keywords", "收到 " + keywords.size() + " 个关键词，最多 6 个。");
-        for (int i = 0; i < keywords.size(); i++) checkText(issues, "keywords["+i+"]", keywords.get(i), 48);
-    }
-
-    private static void checkText(Map<String,String> issues, String field, String text, int limit) {
-        if (plain(text, limit)) return;
-        String reason = text.isBlank() ? "不能为空。" : text.length() > limit
-                ? "长度 " + text.length() + "，上限 " + limit + "（UTF-16）。"
-                : "请使用单行纯文本，移除控制字符、物品标记或链接。";
-        if (field.equals("detail") && text.length() > limit) reason += "建议改写到 100–150 字，保留结论和关键条件。";
-        issues.putIfAbsent(field, reason);
-    }
+    static boolean validFacet(String facet) { return FACETS.contains(facet); }
 
     static JsonObject invalidFields(Map<String,String> issues) {
         var first = issues.entrySet().iterator().next();

@@ -8,11 +8,11 @@
 
 ## 使用
 
-Forge 1.20.1 客户端和专用服务端均安装问舟与 PixelMC Hub 0.5.5-dev。PixelMC Manager 0.9.1-dev 安装在专用服务端。服主配置服务并在「玩家权限」授权后，玩家从手册左侧的「问舟 BETA」进入。查阅过程中可显示一两行阶段进展，回答完成后可以展开工作流程回看。历史可续聊，输入栏发送按钮旁显示当前会话累计费用，悬停可查看各项用量。
+Forge 1.20.1 客户端和专用服务端均安装问舟与 PixelMC Hub 0.5.5-dev。PixelMC Manager 0.9.2-dev 安装在专用服务端。服主配置服务并在「玩家权限」授权后，玩家从手册左侧的「问舟 BETA」进入。查阅过程中可显示一两行阶段进展，回答完成后可以展开工作流程回看。历史可续聊，输入栏发送按钮旁显示当前会话累计费用，悬停可查看各项用量。
 
 [部署和回滚](DEPLOYMENT.md) · [Manager 管理页面配置](ADMIN-WEB.md)
 
-首次进入问舟时，本地候选显示开屏和五步引导；展示状态使用 Manager 标准全局玩家字段 `wenzhouai.intro_seen` 保存。首页文案随机显示。开屏引导与协议签署是两项不同状态。当前候选为问舟 0.1.26-dev，玩法查询优先使用运行中的配方、标签和战利品池。代码及事件候选会关联本轮物品、标签、地物、已加载的相关设置与脚本入口，并按实际条件作答。以下描述对应 Forge 1.20.1 的本地实现，尚未部署。
+首次进入问舟时，本地候选显示开屏和五步引导；展示状态使用 Manager 标准全局玩家字段 `wenzhouai.intro_seen` 保存。首页文案随机显示。开屏引导与协议签署是两项不同状态。当前候选为问舟 0.1.27-dev，查材料获取可按产物注册 ID 跨模组反查事件。共享笔记使用本轮服务端核实的事实，工作台配方可直接出卡。玩法查询优先使用运行中的配方、标签和战利品池。代码及事件候选会关联本轮物品、标签、地物、已加载的相关设置与脚本入口，并按实际条件作答。以下描述对应 Forge 1.20.1 的本地实现，尚未部署。
 
 ## 引用世界中的方块
 
@@ -62,7 +62,7 @@ pixelmcmanager/forge/pixelmcmanager-forge-1.20.1/
 
 ## English
 
-Wenzhou AI is a Forge 1.20.1 gameplay assistant integrated with PixelMC Hub and Manager. Install Hub 0.5.5-dev and Wenzhou 0.1.26-dev on both client and dedicated server, with Manager 0.9.1-dev on the server. Grant access in Manager and configure the model service before use. These are local candidates, not a deployment.
+Wenzhou AI is a Forge 1.20.1 gameplay assistant integrated with PixelMC Hub and Manager. Install Hub 0.5.5-dev and Wenzhou 0.1.27-dev on both client and dedicated server, with Manager 0.9.2-dev on the server. Grant access in Manager and configure the model service before use. These are local candidates, not a deployment.
 
 The first visit shows an introduction and a five-step guide; its shown state uses the Manager global player field `wenzhouai.intro_seen`. The home screen chooses a random greeting. This introduction is separate from agreement acceptance.
 

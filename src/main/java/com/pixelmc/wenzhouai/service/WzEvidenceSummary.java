@@ -11,6 +11,11 @@ record WzEvidenceSummary(String outcome, String detail) {
             if (kind.equals("merchant_offers") && status.equals("last_seen"))
                 return new WzEvidenceSummary("已查阅","上次交易界面的报价 · "+number(result,"ageMs")/1000+" 秒前");
             if(!status.equals("live"))return new WzEvidenceSummary(status.equals("mod_not_installed")?"未安装":"未取得结果",string(result,"message"));
+            if (kind.equals("event_outputs")) {
+                var coverage = object(result, "coverage");
+                return new WzEvidenceSummary("已查询", "事件线索 " + number(result, "total") + " 项"
+                        + (flag(coverage, "partial") ? " · 部分来源未读" : ""));
+            }
             if (result.has("entry")) {
                 var entry = result.getAsJsonObject("entry");
                 String detail = switch (string(entry,"available_now")) {
@@ -89,7 +94,8 @@ record WzEvidenceSummary(String outcome, String detail) {
                         case "search_tags", "item_tags" -> new WzEvidenceSummary("已查阅", "本服标签匹配 " + number(result, "total") + " 项");
                         case "item_overview" -> new WzEvidenceSummary("已核对", "引用物品与已加载的产物配方");
                         case "food_effects" -> new WzEvidenceSummary("已读取", "本服默认物品栈的食用属性");
-                        case "loot_sources" -> new WzEvidenceSummary("已查阅", "战利品候选表 · " + number(result, "total") + " 张");
+                        case "loot_sources" -> new WzEvidenceSummary("已查阅", "战利品候选表 · " + number(result, "total") + " 张"
+                                + (number(result, "unreadable") > 0 ? " · 未解析 " + number(result, "unreadable") + " 张" : ""));
                         case "loot_table" -> new WzEvidenceSummary("已读取", "本服战利品表定义 · 第 " + number(result, "page") + " 页");
                         case "tag" ->
                                 new WzEvidenceSummary(

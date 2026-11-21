@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -20,6 +21,13 @@ final class WzReply {
     private static final Pattern REFERENCE =
             Pattern.compile("\\[\\[(recipe|item|stack):(" + RESOURCE_ID + "|[a-z0-9-]{36})]]");
     private static final Pattern VALID_RESOURCE = Pattern.compile(RESOURCE_ID);
+    private static final Pattern CLAUSES = Pattern.compile("[，,。！？!?；;\n]|以及|另外|同时|顺便");
+    private static final Pattern CRAFT = Pattern.compile("合成|配方|制作|打造|(?:怎么|如何|怎样)(?:做|摆)|工作台");
+    private static final Pattern OBTAIN = Pattern.compile("获得|获取|得到|弄到|拿到|从哪|哪里|在哪|怎么来|怎么挖");
+    private static final Pattern OTHER_QUESTION = Pattern.compile("用途|用法|怎么用|如何使用|比较|对比|伤害|属性|掉率|商店|价格|限购|怎么修|有什么用");
+    private static final Pattern GRID_HEADER = Pattern.compile("左(?:列|格)?[|]中(?:列|格)?[|]右(?:列|格)?|第?1(?:列|格)[|]第?2(?:列|格)[|]第?3(?:列|格)");
+    private static final Pattern GRID_INTRO = Pattern.compile(".*(?:合成|摆放|工作台|制作|配方|格子).*");
+    private static final Pattern SOURCE_CHECK = Pattern.compile("未核实|未能核实|没有核实|未确认|未能确认|还不确定");
     private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}&&[^\\n\\t]]");
     private static final int INLINE_ITEM_BYTES = 6500;
     // Only a delimited list label can be redundant. Ordinary prose before an item stays intact.
@@ -71,9 +79,149 @@ final class WzReply {
     private final Map<String, JsonObject> recipes = new HashMap<>();
     private final Map<String, JsonObject> stacks = new HashMap<>();
     private final Function<String, String> itemNames;
+    private final WorkbenchRequest workbench;
+    private String preflightRecipe = "";
+    private String acquisition = "";
+    private String acquisitionTool = "";
+    private boolean alternateSource;
+    private boolean deterministicCard;
+    private boolean requestedMaterialIsIngredient;
 
     WzReply(Function<String, String> itemNames) {
+        this(itemNames, null);
+    }
+
+    WzReply(Function<String, String> itemNames, WorkbenchRequest workbench) {
         this.itemNames = itemNames;
+        this.workbench = workbench;
+    }
+
+    record WorkbenchRequest(String output, String material, boolean specific) {
+        static WorkbenchRequest parse(String question) {
+            var all = new LinkedHashSet<String>();
+            var outputs = new LinkedHashSet<String>();
+            var materials = new LinkedHashSet<String>();
+            for (String clause : CLAUSES.split(question)) {
+                var items = new LinkedHashSet<String>();
+                var references = REFERENCE.matcher(clause);
+                while (references.find()) {
+                    if (references.group(1).equals("item")) items.add(references.group(2));
+                }
+                all.addAll(items);
+                if (items.size() != 1) continue;
+                boolean craft = CRAFT.matcher(clause).find();
+                boolean obtain = OBTAIN.matcher(clause).find();
+                if (craft && !obtain) outputs.addAll(items);
+                if (obtain && !craft) materials.addAll(items);
+            }
+            if (outputs.size() != 1) return null;
+            boolean specific = materials.size() <= 1 && all.size() == outputs.size() + materials.size()
+                    && !OTHER_QUESTION.matcher(question).find();
+            return new WorkbenchRequest(outputs.iterator().next(), materials.size() == 1 ? materials.iterator().next() : "", specific);
+        }
+
+        JsonObject matchingRecipe(JsonObject overview) {
+            for (var element : elements(overview, "items")) {
+                if (!element.isJsonObject()) continue;
+                var item = element.getAsJsonObject();
+                if (!output.equals(string(item, "item")) || number(item, "count") != 1) continue;
+                var detail = object(item, "detail");
+                var recipe = object(detail, "recipe");
+                String serializer = string(recipe, "serializer");
+                if (!string(detail, "status").equals("live") || !output.equals(string(object(recipe, "result"), "item"))
+                        || !(serializer.equals("minecraft:crafting_shaped") || serializer.equals("minecraft:crafting_shapeless"))) continue;
+                return recipe;
+            }
+            return new JsonObject();
+        }
+
+        boolean includesMaterial(JsonObject recipe) {
+            if (material.isEmpty()) return false;
+            for (var ingredient : elements(recipe, "ingredients")) {
+                if (ingredient.isJsonObject() && material.equals(string(ingredient.getAsJsonObject(), "item"))) return true;
+            }
+            return false;
+        }
+    }
+
+    private static JsonArray elements(JsonObject value, String key) {
+        return value.has(key) && value.get(key).isJsonArray() ? value.getAsJsonArray(key) : new JsonArray();
+    }
+
+    String completeAnswer(String modelText) {
+        if (!deterministicCard) return modelText;
+        String marker = "[[recipe:" + preflightRecipe + "]]";
+        String answer = removeIncorrectGrid(modelText.replace(marker, "")).strip();
+        if (answer.isBlank()) {
+            answer = "[[item:" + workbench.output() + "]]用工作台按下方配方合成。";
+            if (!workbench.specific()) answer += "其他部分暂未核实。";
+        }
+        if (requestedMaterialIsIngredient) {
+            String toolName = acquisitionTool.isEmpty() ? null : itemNames.apply(acquisitionTool);
+            if (!acquisition.isEmpty() && !answer.contains(acquisition)
+                    && (acquisitionTool.isEmpty() || !answer.contains(acquisitionTool))
+                    && (toolName == null || !answer.contains(toolName))) {
+                answer += "\n\n" + acquisition;
+            } else if (acquisition.isEmpty() && !alternateSource && !SOURCE_CHECK.matcher(answer).find()) {
+                answer += "\n\n[[item:" + workbench.material() + "]]的获得方法目前还未核实。";
+            }
+        }
+        return answer + "\n\n" + marker;
+    }
+
+    boolean hasDeterministicCard() {
+        return deterministicCard;
+    }
+
+    private String removeIncorrectGrid(String input) {
+        var data = recipes.get(preflightRecipe);
+        if (data == null || number(data, "width") != 3 || number(data, "height") != 3) return input;
+        var lines = input.split("\\R", -1);
+        var selectedSlots = elements(data, "display_slots");
+        for (int start = 0; start + 4 < lines.length; start++) {
+            String[] header = cells(lines[start]);
+            String[] separator = cells(lines[start + 1]);
+            if (header.length != 3 || separator.length != 3
+                    || !GRID_HEADER.matcher(String.join("|", header)).matches()
+                    || !java.util.Arrays.stream(separator).allMatch(cell -> cell.matches(":?-{2,}:?"))) continue;
+            int intro = start - 1;
+            while (intro >= 0 && lines[intro].isBlank()) intro--;
+            if (intro < 0 || !GRID_INTRO.matcher(lines[intro]).matches()) continue;
+            String[][] rows = {cells(lines[start + 2]), cells(lines[start + 3]), cells(lines[start + 4])};
+            if (!java.util.Arrays.stream(rows).allMatch(cells -> cells.length == 3)
+                    || start + 5 < lines.length && cells(lines[start + 5]).length == 3) continue;
+            boolean correct = true;
+            for (int row = 0; row < 3; row++)
+                for (int column = 0; column < 3; column++)
+                    correct &= matchesIngredient(rows[row][column], selectedSlots.get(row * 3 + column));
+            if (!correct) {
+                java.util.Arrays.fill(lines, start, start + 5, "");
+                if (lines[intro].matches("(?:请)?按(?:照)?(?:下表|下面(?:的|这个)表|下方表格)(?:合成|制作|摆放)?[。:：]?$"))
+                    lines[intro] = "工作台配方见下方配方卡。";
+            }
+        }
+        return String.join("\n", lines).replaceAll("\n{3,}", "\n\n");
+    }
+
+    private static String[] cells(String line) {
+        String trimmed = line.strip();
+        if (trimmed.length() < 2 || !trimmed.startsWith("|") || !trimmed.endsWith("|")) return new String[0];
+        return java.util.Arrays.stream(trimmed.substring(1, trimmed.length() - 1).split("\\|", -1))
+                .map(String::strip).toArray(String[]::new);
+    }
+
+    private boolean matchesIngredient(String modelCell, JsonElement slot) {
+        String cell = modelCell.replace("**", "").replace("`", "").strip();
+        if (slot.isJsonNull()) return cell.matches("|空(?:格|白)?|无|—+|-+");
+        for (var key : elements(slot.getAsJsonObject(), "keys")) {
+            var stack = stacks.get(key.getAsString());
+            if (stack == null) continue;
+            String id = string(stack, "id");
+            if (cell.equals(id) || cell.equals("[[item:" + id + "]]")
+                    || cell.equals("[[stack:" + key.getAsString() + "]]")
+                    || cell.equals(string(stack, "name")) || cell.equals(itemNames.apply(id))) return true;
+        }
+        return false;
     }
 
     void collect(String mode, String kind, String id, JsonObject evidence) {
@@ -83,13 +231,41 @@ final class WzReply {
             return;
         }
         if ("item_overview".equals(kind) && evidence.has("items")) {
+            if (workbench != null) {
+                var recipe = workbench.matchingRecipe(evidence);
+                preflightRecipe = string(recipe, "id");
+                requestedMaterialIsIngredient = workbench.includesMaterial(recipe);
+            }
             for (var element : evidence.getAsJsonArray("items")) {
                 var row = element.getAsJsonObject();
                 if (row.has("detail"))
                     collect("live", "recipe", row.getAsJsonArray("recipe_ids").get(0).getAsString(), row.getAsJsonObject("detail"));
             }
+            deterministicCard = !preflightRecipe.isEmpty() && addRecipe(new JsonObject(), new JsonObject(), preflightRecipe);
             return;
         }
+        if (workbench != null && workbench.material().equals(id) && "live".equals(mode)
+                && "event_outputs".equals(kind) && id.equals(string(evidence, "target"))) {
+            for (var candidate : elements(evidence, "entries")) {
+                if (!candidate.isJsonObject()) continue;
+                var row = candidate.getAsJsonObject();
+                if (!"verified".equals(string(row, "confidence"))) continue;
+                for (var result : elements(row, "outputs")) {
+                    if (result.isJsonObject() && id.equals(string(result.getAsJsonObject(), "id"))
+                            && !string(row, "fact").isBlank()) {
+                        acquisition = string(row, "fact").strip();
+                        acquisitionTool = string(row, "tool");
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        if (workbench != null && workbench.material().equals(id) && "live".equals(mode)
+                && "live".equals(string(evidence, "status"))
+                && java.util.Set.of("recipes_for_item", "loot_sources", "chest_sources", "trade_offers",
+                        "merchant_offers", "quest_rewards", "shop_item", "worldgen_sources", "machine_conversions").contains(kind)
+                && number(evidence, "total") > 0) alternateSource = true;
         JsonObject displayed = new JsonObject();
         String status = string(evidence, "status");
         if ("live".equals(mode) && "recipe".equals(kind) && "live".equals(status)) {
@@ -197,10 +373,12 @@ final class WzReply {
         JsonObject reply = new JsonObject();
         if (projection.inline) reply.add("text", projection.parts);
         else reply.addProperty("text", projection.plain.toString().strip());
-        var ref = REFERENCE.matcher(answer);
-        while (ref.find()) {
-            if (!ref.group(1).equals("recipe")) continue;
-            if (addRecipe(reply, projection.items, ref.group(2))) break;
+        if (!deterministicCard || !addRecipe(reply, projection.items, preflightRecipe)) {
+            var ref = REFERENCE.matcher(answer);
+            while (ref.find()) {
+                if (!ref.group(1).equals("recipe")) continue;
+                if (addRecipe(reply, projection.items, ref.group(2))) break;
+            }
         }
         if (projection.items.size() > 0) reply.add("items", projection.items);
         return reply;
@@ -217,7 +395,7 @@ final class WzReply {
             previous = matcher.end();
             String kind = matcher.group(1), key = matcher.group(2);
             if (kind.equals("recipe")) continue;
-            JsonObject item = kind.equals("stack") ? stacks.get(key) : item(key, "");
+            JsonObject item = kind.equals("stack") ? localized(stacks.get(key)) : item(key, "");
             if (item == null) {
                 if (kind.equals("item")) result.text(key);
                 continue;
@@ -283,14 +461,14 @@ final class WzReply {
                 for (JsonElement choice : keys) {
                     String choiceKey = choice.getAsString();
                     linked.add("stack-" + choiceKey);
-                    cardItems.add("stack-" + choiceKey, stacks.get(choiceKey));
+                    cardItems.add("stack-" + choiceKey, localized(stacks.get(choiceKey)));
                 }
                 alternatives.add(Integer.toString(slots.size()), linked);
             }
             slots.add("stack-" + key);
-            cardItems.add("stack-" + key, item);
+            cardItems.add("stack-" + key, localized(item));
         }
-        cardItems.add("stack-" + outputKey, output);
+        cardItems.add("stack-" + outputKey, localized(output));
         cardItems.entrySet().forEach(entry -> items.add(entry.getKey(), entry.getValue()));
         JsonObject recipe = new JsonObject();
         recipe.addProperty("columns", width);
@@ -304,6 +482,15 @@ final class WzReply {
         }
         reply.add("recipe", recipe);
         return true;
+    }
+
+    private JsonObject localized(JsonObject stack) {
+        if (stack == null) return null;
+        String name = itemNames.apply(string(stack, "id"));
+        if (name == null || name.equals(string(stack, "name"))) return stack;
+        JsonObject result = stack.deepCopy();
+        result.addProperty("name", name);
+        return result;
     }
 
     private JsonObject item(String id, String snbt) {

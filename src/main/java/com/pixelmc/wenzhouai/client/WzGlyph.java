@@ -76,6 +76,7 @@ final class WzGlyph {
                     case "store" -> "M3 10l2-6h14l2 6M3 10c0 3 4 3 5 0 2 3 5 3 7 0 2 3 5 3 6 0M5 13v8h14v-8m-10 8v-6h4v6";
                     case "store-search" -> "M2 9l2-5h12l2 5H2zm2 0v10h6m9-3 3 5m-3-7a3 3 0 1 1-6 0 3 3 0 1 1 6 0";
                     case "quote" -> "M5 2h14v20l-3-2-4 2-4-2-3 2zM8 7h8m-8 4h3m2 0h3m-8 4h8";
+                    case "event-output" -> "M3 16l5-5 4 3 6-8m-5 0h5v5M4 19h15";
                     case "worldgen" -> "M3 20h18M8 20v-4H4l4-5H5l5-7 5 7h-3l4 5h-4v4m4-9 2-3 4 6h-3l3 4h-5";
                     case "spawn" -> "M5 14l-2-5 3-1 2 4m1-3-1-5 3-1 1 5m2 1 2-5 3 1-2 5m2 2 2-2 2 2-3 4M7 18q4-11 9-3l2 4q0 3-4 1l-2-1-3 1q-4 2-2-2Z";
                     case "biome" -> "M2 19l7-12 5 8 3-5 5 9ZM6 12l3 1 2-2";

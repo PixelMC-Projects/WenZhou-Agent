@@ -75,7 +75,7 @@ final class WzConversation {
                 case "tool.start", "tool.finish" -> {
                     activityRevision++;
                     String icon = str(event, "icon");
-                    if (java.util.Set.of("worldgen","food-book","store-search","reward","trade","structure-loot").contains(icon)) text = registryTargetLabel(text);
+                    if (java.util.Set.of("event-output","worldgen","food-book","store-search","reward","trade","structure-loot").contains(icon)) text = registryTargetLabel(text);
                     for (int i = 0; !id.isEmpty() && i < activity.size(); i++) {
                         Activity row = activity.get(i);
                         if (!id.equals(row.id())) continue;

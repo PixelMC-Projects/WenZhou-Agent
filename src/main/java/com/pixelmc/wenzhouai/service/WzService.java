@@ -934,9 +934,17 @@ public final class WzService {
                                 WzNetwork.event(server, player, generation, event);
                             });
             var packContext = new WzPackContext(question);
-            WzReply rich = new WzReply(WenzhouReadTools::itemDisplayName);
+            var workbench = blockEvidence.isEmpty() ? WzReply.WorkbenchRequest.parse(question) : null;
+            var names = workbench == null ? CompletableFuture.<WzRegisteredItems.Catalog>completedFuture(null)
+                    : WzRegisteredItems.index(server).exceptionally(unavailable -> null);
+            WzReply rich = new WzReply(id -> {
+                var catalog = names.getNow(null);
+                String localized = catalog == null ? null : catalog.index().localizedName(id);
+                return localized == null ? WenzhouReadTools.itemDisplayName(id) : localized;
+            }, workbench);
             java.util.function.Consumer<JsonObject> sendDelta = update -> {
                 if (run.stopped() || session.hidden || liveFor(player, conversation, 0) != session) return;
+                if ("answer.delta".equals(string(update, "type")) && rich.hasDeterministicCard()) return;
                 update.addProperty("conversationId", conversation);
                 update.addProperty("requestId", requestId);
                 WzNetwork.event(server, player, generation, update);
@@ -1048,7 +1056,7 @@ public final class WzService {
                                         && recent.get(recent.size() - 1).has("itemChoice")), blockEvidence.isEmpty() && !privateHistory,
                                 new WzDiagnostics(conversation, requestId), blockTools,
                                 answer -> {
-                                    String invalid = rich.unverifiedReferences(answer);
+                                    String invalid = rich.unverifiedReferences(rich.completeAnswer(answer));
                                     if (!invalid.isEmpty()) sendDelta.accept(event("answer.reset", ""));
                                     return invalid;
                                 }, text -> {
@@ -1082,6 +1090,18 @@ public final class WzService {
             }
             requireAccess(player, generation);
             if (version() != version) throw new InterruptedException();
+            boolean keepWorkbench = rich.hasDeterministicCard()
+                    && !stopped && !topic && !session.hidden && blockTools.denial() == null;
+            if (keepWorkbench && !names.isDone()) {
+                try {
+                    names.get(2, TimeUnit.SECONDS);
+                } catch (java.util.concurrent.TimeoutException | java.util.concurrent.ExecutionException unavailable) {
+                    // The Minecraft client can still localize registered item stacks.
+                }
+            }
+            if (keepWorkbench && completed == null)
+                completed = new WenzhouChat.Result(new JsonArray(),
+                        "本轮回答未完整生成。下方是已核实的工作台配方。", "已核对工作台配方");
             JsonObject turn = new JsonObject();
             turn.addProperty("question", question);
             if (notes.personalGameplayRead() || privateHistory || !blockEvidence.isEmpty()) turn.addProperty("personalGameplayRead",true);
@@ -1092,10 +1112,11 @@ public final class WzService {
                             summary.isEmpty() ? "已思考" : "思考 · " + summary, "", "");
                 }
                 if (completed.itemChoice() != null) turn.add("itemChoice", completed.itemChoice());
-                turn.addProperty("answerText", rich.answerText(completed.answer()));
+                String finalAnswer = rich.completeAnswer(completed.answer());
+                turn.addProperty("answerText", rich.answerText(finalAnswer));
                 var methodRefs = notes.methodRefs();
                 if (methodRefs.size() > 0) turn.add("methodRefs", methodRefs);
-                turn.add("reply", rich.render(completed.answer()));
+                turn.add("reply", rich.render(finalAnswer));
                 if (choice != null) {
                     turn.addProperty("topicResolvedToken", token);
                     turn.addProperty("topicMoved", fresh);

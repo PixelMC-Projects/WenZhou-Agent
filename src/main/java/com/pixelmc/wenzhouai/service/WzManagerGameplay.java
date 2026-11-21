@@ -8,6 +8,7 @@ final class WzManagerGameplay {
     static final Set<String> TOOLS =
             Set.of(
                     "food_book_stats",
+                    "event_outputs",
                     "structure_generation",
                     "structure_chests",
                     "chest_sources",

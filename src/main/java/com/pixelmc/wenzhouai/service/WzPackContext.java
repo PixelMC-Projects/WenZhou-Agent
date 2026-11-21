@@ -10,7 +10,7 @@ import net.minecraft.server.MinecraftServer;
 final class WzPackContext {
     private static final Pattern ID = Pattern.compile("(?<![a-z0-9_.-])#?([a-z0-9_.-]+:[a-z0-9_./-]+)");
     private static final Pattern INLINE = Pattern.compile("\\[\\[item:([a-z0-9_.-]+:[a-z0-9_./-]+)]]");
-    private static final Set<String> PARTIAL = Set.of("worldgen_sources", "entity_spawns", "food_effects",
+    private static final Set<String> PARTIAL = Set.of("worldgen_sources", "entity_spawns", "food_effects", "event_outputs",
             "locate_gameplay", "read_method", "loot_sources", "loot_table", "trade_offers", "structure_chests", "chest_sources");
     private static final Map<String,Pattern> EVENTS = Map.of(
             "trade", Pattern.compile("trade|merchant|villager|wandering|交易|商人|村民",Pattern.CASE_INSENSITIVE),
@@ -55,9 +55,25 @@ final class WzPackContext {
             String[] parts = target.split(" +", 3);
             if (parts.length > 1 && parts[1].matches("[a-z][a-z0-9_]{0,63}")) mods.add(parts[1]);
         }
+        if (kind.equals("event_outputs") && rows != null) {
+            for (var entry : rows) {
+                if (!entry.isJsonObject()) continue;
+                var row = entry.getAsJsonObject();
+                String sourceMod = WzData.string(row, "sourceMod");
+                if (sourceMod.matches("[a-z][a-z0-9_]{0,63}")) mods.add(sourceMod);
+                for (String key : List.of("tool", "block")) {
+                    String value = WzData.string(row, key);
+                    if (WenzhouReadTools.resourceId(value) != null) ids.add(value);
+                }
+            }
+        }
         String context = kind + " " + question + " " + hint + " " + target + " " + WzData.string(result,"class") + " " + WzData.string(result,"method");
         var domains = new TreeSet<String>();
         EVENTS.forEach((domain, pattern) -> { if (pattern.matcher(context.toLowerCase(Locale.ROOT)).find()) domains.add(domain); });
+        if (kind.equals("event_outputs")) {
+            domains.add("interact");
+            domains.add("loot");
+        }
         if (kind.equals("trade_offers")) domains.add("trade");
         if (kind.equals("structure_chests") || kind.equals("chest_sources")) domains.add("loot");
         if (kind.equals("entity_spawns")) domains.add("spawn");

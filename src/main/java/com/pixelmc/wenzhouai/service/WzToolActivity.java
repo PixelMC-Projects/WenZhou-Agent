@@ -15,6 +15,7 @@ record WzToolActivity(String action, String target, String icon) {
             JsonObject args,
             String selectedSummary) {
         return switch (kind) {
+            case "event_outputs" -> new WzToolActivity("反查事件产物", target, "event-output");
             case "structure_generation" ->
                     new WzToolActivity("查询结构生成", target.equals("*") ? "" : target, "structure");
             case "structure_chests" ->
@@ -71,7 +72,7 @@ record WzToolActivity(String action, String target, String icon) {
                             selectedSummary.isEmpty() ? "所选条目" : selectedSummary,
                             "memory-read");
             case "save_memory" ->
-                    new WzToolActivity("保存记忆", string(args, "summary"), "memory-write");
+                    new WzToolActivity("保存记忆", string(args, "subject"), "memory-write");
             case "skip_memory" -> new WzToolActivity("确认记忆", "", "memory-write");
             case "calculate" -> new WzToolActivity("计算", purpose, "calculator");
             case "command" -> new WzToolActivity("运行命令", purpose, "command");
@@ -89,10 +90,13 @@ record WzToolActivity(String action, String target, String icon) {
         }
         if (kind.equals("read_memory") && !string(result, "summary").isBlank())
             return new WzToolActivity(action, string(result, "summary"), icon);
-        if (kind.equals("save_memory") && result.has("saved") && result.has("created"))
+        if (kind.equals("save_memory") && result.has("saved") && result.has("created")) {
+            String summary = string(result, "summary");
+            String label = summary.isBlank() ? target : summary;
             return result.get("created").getAsBoolean()
-                    ? new WzToolActivity("写入新的记忆", target, "memory-add")
-                    : new WzToolActivity("修改已有记忆", target, "memory-edit");
+                    ? new WzToolActivity("写入新的记忆", label, "memory-add")
+                    : new WzToolActivity("修改已有记忆", label, "memory-edit");
+        }
         return this;
     }
 
