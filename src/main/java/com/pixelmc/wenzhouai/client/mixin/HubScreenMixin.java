@@ -15,12 +15,17 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "com.pixelmc.hub.client.HubScreen", remap = false)
-abstract class HubScreenMixin {
+abstract class HubScreenMixin implements WzHubAccess {
     @Final @Shadow private HubView view;
     @Shadow private boolean failed;
     @Shadow private float panelX;
     @Shadow private float panelY;
     @Shadow private float panelScale;
+
+    @Override
+    public WzPage wenzhouPage() {
+        return ((WzHubAccess) (Object) view).wenzhouPage();
+    }
 
     @Inject(
             method = {"render", "m_88315_"},

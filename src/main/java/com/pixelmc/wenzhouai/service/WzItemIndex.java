@@ -18,7 +18,7 @@ final class WzItemIndex {
     private static final java.util.regex.Pattern SPACE = java.util.regex.Pattern.compile("\\s+");
     record Entry(String id, String modName, String displayName, List<String> chinese, List<String> english) {}
 
-    private record Candidate(Entry item, Set<String> names) {}
+    private record Candidate(Entry item, Set<String> names, Set<String> pinyin) {}
     private final Map<String, Candidate> byId = new HashMap<>();
     private final Map<String, List<Candidate>> exact = new HashMap<>();
     private final List<Candidate> entries = new ArrayList<>();
@@ -26,13 +26,19 @@ final class WzItemIndex {
     WzItemIndex(List<Entry> items) {
         for (Entry item : items.stream().sorted(Comparator.comparing(Entry::id)).toList()) {
             Set<String> names = new LinkedHashSet<>();
-            names.add(normal(item.id()));
-            names.add(normal(item.id().substring(item.id().indexOf(':') + 1)));
             names.add(normal(item.displayName()));
             for (String name : item.chinese()) names.add(normal(name));
             for (String name : item.english()) names.add(normal(name));
             names.remove("");
-            Candidate candidate = new Candidate(item, names);
+            Set<String> readings = new LinkedHashSet<>();
+            for (String name : names) {
+                if (name.codePoints().anyMatch(cp -> Character.UnicodeScript.of(cp) == Character.UnicodeScript.HAN))
+                    readings.add(WzPinyin.of(name));
+            }
+            Set<String> search = new LinkedHashSet<>(names);
+            search.add(normal(item.id()));
+            search.add(normal(item.id().substring(item.id().indexOf(':') + 1)).replace('_', ' '));
+            Candidate candidate = new Candidate(item, search, readings);
             entries.add(candidate);
             byId.put(item.id(), candidate);
             for (String name : names) exact.computeIfAbsent(name, ignored -> new ArrayList<>()).add(candidate);
@@ -75,7 +81,18 @@ final class WzItemIndex {
             else if (partial) contains.add(candidate);
         }
         starts.addAll(contains);
-        return result(query, starts.isEmpty() ? "none" : "partial", starts);
+        if (!starts.isEmpty()) return result(query, "partial", starts);
+        String spelling = WzPinyin.of(needle);
+        if (spelling.length() < 2 || !spelling.matches("[a-z0-9]+")) return result(query, "none", List.of());
+        List<Candidate> homophones = new ArrayList<>();
+        List<Candidate> fragments = new ArrayList<>();
+        for (Candidate candidate : entries) {
+            if (candidate.pinyin.contains(spelling)) homophones.add(candidate);
+            else if (spelling.length() >= 3 && candidate.pinyin.stream().anyMatch(s -> s.contains(spelling)))
+                fragments.add(candidate);
+        }
+        if (!homophones.isEmpty()) return result(query, "pinyin", homophones);
+        return result(query, fragments.isEmpty() ? "none" : "pinyin_partial", fragments);
     }
 
     private JsonObject matchIds(String pattern) {
@@ -117,6 +134,6 @@ final class WzItemIndex {
 
     private static String normal(String value) {
         String clean = Normalizer.normalize(net.minecraft.ChatFormatting.stripFormatting(value), Normalizer.Form.NFKC).strip().toLowerCase(Locale.ROOT);
-        return SPACE.matcher(clean.replace('_', ' ')).replaceAll(" ").strip();
+        return SPACE.matcher(clean).replaceAll(" ").strip();
     }
 }

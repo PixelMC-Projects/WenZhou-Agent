@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 final class WzConversation {
@@ -23,7 +24,9 @@ final class WzConversation {
         final JsonArray receipts = new JsonArray();
         final WzStreamingReply stream = new WzStreamingReply();
         final long since = System.nanoTime();
-        JsonObject reply;
+        JsonObject reply, itemChoice;
+        String choiceId = "";
+        int selectedOption = -1;
         String topic = "", topicToken = "", error = "";
         boolean usageMissing;
         boolean persisted, stopping, stopped;
@@ -48,6 +51,12 @@ final class WzConversation {
                     stream.append(text);
                 }
                 case "answer.reset" -> stream.reset();
+                case "stage.report" -> {
+                    if (!text.isBlank() && activity.stream().noneMatch(row -> row.id().equals(id))) {
+                        activity.add(new Activity(type, id, "", text, "", System.nanoTime()));
+                        activityRevision++;
+                    }
+                }
                 case "progress" -> {
                     for (int i = 0; !id.isEmpty() && i < activity.size(); i++) {
                         Activity old = activity.get(i);
@@ -66,6 +75,7 @@ final class WzConversation {
                 case "tool.start", "tool.finish" -> {
                     activityRevision++;
                     String icon = str(event, "icon");
+                    if (java.util.Set.of("worldgen","food-book","store-search","reward","trade","structure-loot").contains(icon)) text = registryTargetLabel(text);
                     for (int i = 0; !id.isEmpty() && i < activity.size(); i++) {
                         Activity row = activity.get(i);
                         if (!id.equals(row.id())) continue;
@@ -153,6 +163,32 @@ final class WzConversation {
             loadingList,
             checking,
             writing;
+    boolean blockReferences;
+    // A missing field is an old server or a pending login. Only an explicit false opens the guide.
+    private boolean introSeen = true, introShownHere, introWritePending;
+    private int introWriteAttempts;
+    private long introRetryAt;
+
+    boolean introSeen() {
+        return introSeen || introShownHere;
+    }
+
+    void markIntroSeen() {
+        if (introSeen() || !entry()) return;
+        introShownHere = true;
+        acknowledgeIntro();
+    }
+
+    private void acknowledgeIntro() {
+        introWritePending = true;
+        introWriteAttempts++;
+        request("introSeen", new JsonObject(), result -> {
+            introWritePending = false;
+            if (flag(result, "introSeen")) introSeen = true;
+            else introRetryAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        });
+    }
+
     String entryNotice = "";
     private Object connection;
     private long nextStatus, epoch, selectionEpoch;
@@ -179,6 +215,8 @@ final class WzConversation {
             return;
         }
         long now = System.nanoTime();
+        if (introShownHere && !introSeen && !introWritePending && introWriteAttempts < 3
+                && entry() && now >= introRetryAt) acknowledgeIntro();
         if (granted && quota.enabled() && quota.resetAt() > 0
                 && System.currentTimeMillis() >= quota.resetAt() && now >= nextQuotaCheck) {
             statusDirty = true;
@@ -201,6 +239,8 @@ final class WzConversation {
                     boolean hadAccess = granted && (!showProtocol || consented);
                     entryNotice = str(result, "entryNotice");
                     granted = flag(result, "granted");
+                    introSeen = !granted || !result.has("introSeen") || flag(result, "introSeen");
+                    blockReferences = granted && flag(result, "blockReferences");
                     if (granted) applyQuota(result);
                     else quota = WzQuota.OFF;
                     showProtocol = flag(result, "showProtocol");
@@ -217,6 +257,10 @@ final class WzConversation {
     }
 
     void invalidateAccess() {
+        introSeen = true;
+        introShownHere = introWritePending = blockReferences = false;
+        introWriteAttempts = 0;
+        introRetryAt = 0;
         entryNotice = "";
         granted = consented = showProtocol = research = checking = writing = false;
         nextStatus = nextQuotaCheck = 0;
@@ -479,6 +523,9 @@ final class WzConversation {
 
     private void applyTurnRecord(Turn turn, JsonObject row) {
         turn.reply = obj(row, "reply");
+        if (turn.reply != null) turn.open = false;
+        turn.itemChoice = obj(row, "itemChoice");
+        turn.choiceId = str(row, "requestId");
         turn.stopped = flag(row, "stopped");
         turn.error = turn.stopped ? "" : str(row, "failure");
         turn.topic = str(row, "topicPrompt");
@@ -492,6 +539,35 @@ final class WzConversation {
         }
         for (JsonElement event : events)
             if (event.isJsonObject()) turn.apply(event.getAsJsonObject());
+    }
+
+    void dismissItemChoice(Turn turn, Runnable openPicker, Consumer<String> errorNotice) {
+        if (busy() || selected == null || turn.itemChoice == null) return;
+        String thread = selected;
+        long epoch = selectionEpoch;
+        var body = id("id", thread);
+        body.addProperty("choiceId", turn.choiceId);
+        writing = true;
+        request("dismissItemChoice", body, ack -> {
+            writing = false;
+            if (epoch != selectionEpoch || !thread.equals(selected)) return;
+            if (!flag(ack, "dismissed")) { errorNotice.accept(str(ack, "error")); return; }
+            turn.itemChoice = null;
+            openPicker.run();
+        });
+    }
+
+    private static String registryTargetLabel(String label) {
+        int split = label.lastIndexOf(" · ");
+        if (split < 0) return label;
+        var id = net.minecraft.resources.ResourceLocation.tryParse(label.substring(split + 3));
+        if (id == null) return label;
+        var item = net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(id);
+        var block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getOptional(id);
+        String name = item.map(i -> net.minecraft.client.resources.language.I18n.get(i.getDescriptionId()))
+                .orElseGet(() -> block.map(b -> b.getName().getString()).orElse(""));
+        return name.isBlank() || name.startsWith("item.") || name.startsWith("block.") ? label
+                : label.substring(0, split + 3) + net.minecraft.ChatFormatting.stripFormatting(name);
     }
 
     void retryHistory() {
@@ -589,6 +665,9 @@ final class WzConversation {
                     if (!id.isEmpty()) selected = id;
                     turn.stopped = flag(result, "stopped");
                     turn.reply = obj(result, "reply");
+                    if (turn.reply != null) turn.open = false;
+                    turn.itemChoice = obj(result, "itemChoice");
+                    turn.choiceId = str(result, "requestId");
                     turn.answered = turn.stream.started() ? 0 : System.nanoTime();
                     JsonArray activity = array(result, "events");
                     if (!activity.isEmpty()) {

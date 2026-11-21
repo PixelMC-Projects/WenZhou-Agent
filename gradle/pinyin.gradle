@@ -1,0 +1,26 @@
+// Only the generator uses ICU. Forge's dedicated server does not ship it.
+configurations {
+    pinyinGenerator {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+dependencies { pinyinGenerator 'com.ibm.icu:icu4j:71.1' }
+
+def generatorSource = file('gradle/GeneratePinyin.java')
+def tableDirectory = layout.buildDirectory.dir('generated/wenzhou-pinyin')
+def generatePinyin = tasks.register('wenzhouPinyin', JavaExec) {
+    inputs.file(generatorSource)
+    outputs.dir(tableDirectory)
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(17) }
+    classpath = configurations.pinyinGenerator
+    mainClass = generatorSource.absolutePath
+    jvmArgs '-Dfile.encoding=UTF-8'
+    doFirst {
+        args tableDirectory.get().asFile.absolutePath, configurations.pinyinGenerator.singleFile.absolutePath
+    }
+}
+tasks.named('processResources') {
+    dependsOn generatePinyin
+    from(tableDirectory) { into 'wenzhouai/pinyin' }
+}

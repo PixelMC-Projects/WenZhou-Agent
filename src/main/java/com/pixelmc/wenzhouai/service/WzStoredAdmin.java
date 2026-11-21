@@ -6,7 +6,11 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.pixelmc.wenzhouai.manager.WzAdminBackend;
 import com.pixelmc.wenzhouai.manager.WzDirectory;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -14,7 +18,7 @@ import java.util.function.Consumer;
 
 /** The Manager service reads saved data without loading game classes or decrypting credentials. */
 public final class WzStoredAdmin implements WzAdminBackend.Data {
-    private static final Set<String> ADMIN_TURN_FIELDS = Set.of(
+    private static final List<String> ADMIN_TURN_FIELDS = List.of(
             "id", "createdAt", "question", "reply", "topicPrompt", "stopped", "failure", "events", "usageReceipts", "usageMissing");
 
     private final Path directory;
@@ -78,9 +82,7 @@ public final class WzStoredAdmin implements WzAdminBackend.Data {
     public JsonObject usage(UUID player, String id, boolean research) {
         requireStorage();
         long since = since(player, research);
-        var turns = WzHistory.usageTurns(object(history.load(player), id), since);
-        if (turns.isEmpty()) throw new IllegalArgumentException("问舟会话不可用");
-        return WzThreadUsage.merge(turns, null);
+        return usage(history.savedThread(player, id, since), since, null, false);
     }
 
     @Override
@@ -126,9 +128,38 @@ public final class WzStoredAdmin implements WzAdminBackend.Data {
                 && flag(receipt, "research") && since > 0 ? since : -1;
     }
 
-    static JsonObject thread(UUID player, String id, JsonObject saved, long since,
-                             String runningQuestion, long runningAt, JsonArray runningReceipts,
-                             boolean runningMissing) {
+    record SavedThread(JsonArray receipts, int count, String bodyVersion) {}
+
+    static SavedThread snapshot(JsonObject saved, long since) {
+        JsonArray turns = visibleTurns(saved, since);
+        return new SavedThread(WzHistory.usageTurns(saved, since), turns.size(), bodyVersion(saved, turns, since));
+    }
+
+    static JsonObject usage(SavedThread saved, long since, JsonArray runningReceipts, boolean runningMissing) {
+        if (saved.count() == 0 && runningReceipts == null)
+            throw new IllegalArgumentException("问舟会话不可用");
+        JsonObject result = WzThreadUsage.merge(saved.receipts(), runningReceipts, runningMissing);
+        result.addProperty("bodyVersion", saved.bodyVersion());
+        result.addProperty("researchSince", since);
+        return result;
+    }
+
+    private static String bodyVersion(JsonObject saved, JsonArray turns, long since) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            if (!turns.isEmpty()) {
+                String title = WzHistory.visibleTitle(saved, turns.get(0).getAsJsonObject(), since);
+                digest.update(title.getBytes(StandardCharsets.UTF_8));
+            }
+            digest.update((byte) 0);
+            for (var turn : turns) digest.update(turn.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException(unavailable);
+        }
+    }
+
+    private static JsonArray visibleTurns(JsonObject saved, long since) {
         JsonArray turns = new JsonArray();
         JsonArray messages = saved.getAsJsonArray("messages");
         if (messages != null) {
@@ -141,6 +172,13 @@ public final class WzStoredAdmin implements WzAdminBackend.Data {
                 turns.add(turn);
             }
         }
+        return turns;
+    }
+
+    static JsonObject thread(UUID player, String id, JsonObject saved, long since,
+                             String runningQuestion, long runningAt, JsonArray runningReceipts,
+                             boolean runningMissing) {
+        JsonArray turns = visibleTurns(saved, since);
         if (turns.isEmpty() && runningQuestion == null)
             throw new IllegalArgumentException("问舟会话不可用");
         JsonObject usage = WzThreadUsage.merge(turns, runningReceipts, runningMissing);
@@ -151,9 +189,11 @@ public final class WzStoredAdmin implements WzAdminBackend.Data {
         String title = savedTurns
                 ? WzHistory.visibleTitle(saved, turns.get(0).getAsJsonObject(), since)
                 : WzHistory.title(runningQuestion);
-        long updated = savedTurns ? number(turns.get(turns.size() - 1).getAsJsonObject(), "createdAt") : runningAt;
+        long updated = runningQuestion != null ? runningAt : number(turns.get(turns.size() - 1).getAsJsonObject(), "createdAt");
         result.addProperty("title", title);
         result.addProperty("updated", updated);
+        result.addProperty("bodyVersion", bodyVersion(saved, turns, since));
+        result.addProperty("researchSince", since);
         turns.forEach(turn -> turn.getAsJsonObject().remove("usageMissing"));
         result.add("turns", turns);
         result.addProperty("count", turns.size());

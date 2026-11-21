@@ -3,8 +3,9 @@ package com.pixelmc.wenzhouai.service;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import java.io.IOException;
+import com.google.gson.Gson;
+import net.minecraft.world.level.storage.loot.Deserializers;
+import net.minecraft.world.level.storage.loot.LootTable;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -20,12 +21,13 @@ import net.minecraft.Util;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.level.storage.loot.LootDataType;
 
 final class WzLoot {
     private static final Map<ResourceManager, CompletableFuture<Index>> CACHE = new WeakHashMap<>();
+    private static final Gson TABLE_JSON = Deserializers.createLootTableSerializer().create();
+    static void clear() { synchronized (CACHE) { CACHE.clear(); } }
     private static final int PAGE = 16;
 
     static final class Index {
@@ -82,7 +84,7 @@ final class WzLoot {
                 matches.add(row);
             }
             JsonObject result = WenzhouReadTools.message("live",
-                    "本服已加载战利品表的生效数据包定义。引用是候选来源，请读表核实条件和权重；事件、全局战利品修饰器及动态物品变换可能另行增删掉落。");
+                    "本服当前已加载的战利品池。引用是候选来源，请读表核实条件和权重；事件、全局战利品修饰器及动态物品变换可能另行增删掉落。");
             result.addProperty("total", found.size());
             result.addProperty("unreadable", unreadable);
             result.addProperty("page", page);
@@ -97,7 +99,8 @@ final class WzLoot {
         if ("loot_table".equals(kind)) {
             if (!tables.getKeys(LootDataType.TABLE).contains(id))
                 return CompletableFuture.completedFuture(WenzhouReadTools.message("not_active", "本服未加载该战利品表。"));
-            return CompletableFuture.supplyAsync(() -> detail(resources, id, page), Util.ioPool());
+            LootTable active = tables.getLootTable(id);
+            return CompletableFuture.supplyAsync(() -> detail(active, id, page), Util.ioPool());
         }
         var holder = BuiltInRegistries.ITEM.getHolder(net.minecraft.resources.ResourceKey.create(
                 net.minecraft.core.registries.Registries.ITEM, id));
@@ -107,8 +110,9 @@ final class WzLoot {
         synchronized (CACHE) {
             future = CACHE.get(resources);
             if (future == null || future.isCompletedExceptionally()) {
-                var ids = List.copyOf(tables.getKeys(LootDataType.TABLE));
-                future = CompletableFuture.supplyAsync(() -> build(resources, ids), Util.ioPool());
+                var active = new HashMap<ResourceLocation,LootTable>();
+                for (var key : tables.getKeys(LootDataType.TABLE)) active.put(key,tables.getLootTable(key));
+                future = CompletableFuture.supplyAsync(() -> build(active), Util.ioPool());
                 CACHE.put(resources, future);
             }
         }
@@ -122,9 +126,28 @@ final class WzLoot {
     }
 
     private static JsonObject attachChanges(JsonObject result, JsonObject changes) {
-        result.add("pack_changes", changes);
         if (!"live".equals(WzData.string(result,"status"))) return result;
-        result.addProperty("message","这里列出数据包原表。结合 pack_changes 检查移除、追加、替换和触发条件，再判断最终掉落。");
+        if (!"pack_changes".equals(WzData.string(changes,"status"))) {
+            result.add("pack_changes",changes);
+        } else {
+            // The running pool already reflects data-pack replacements. Forward only conditional rules.
+            var checks = new JsonObject();
+            var rules = new JsonArray();
+            for (var value : array(changes,"matches")) {
+                var hit = value.getAsJsonObject();
+                if (!hit.has("line") && !hit.has("conditions") && !hit.has("type")) continue;
+                var rule = new JsonObject();
+                for (String field : List.of("path","line","conditions","script_rules","type","item","loot_table_id","excerpt"))
+                    if (hit.has(field)) rule.add(field,hit.get(field));
+                rules.add(rule);
+            }
+            checks.add("rules",rules);
+            checks.addProperty("total",rules.size());
+            if (WzData.flag(changes,"more")) checks.addProperty("more",true);
+            if (WzData.number(changes,"unreadable") > 0) checks.addProperty("unreadable",WzData.number(changes,"unreadable"));
+            result.add("pack_changes", checks);
+        }
+        result.addProperty("message","这些是本服运行中的战利品池；实际掉落还受池条件、全局修饰器和事件影响。pack_changes.more 表示还有规则，可按目标查 pack_changes(view=loot)。");
         if (!result.has("tables")) return result;
         var operations = new HashMap<String,Set<String>>();
         for (var hit : array(changes,"matches")) {
@@ -145,16 +168,12 @@ final class WzLoot {
         return result;
     }
 
-    private static Resource definition(ResourceManager resources, ResourceLocation table) throws IOException {
-        return resources.getResourceOrThrow(table.withPath("loot_tables/" + table.getPath() + ".json"));
-    }
-
-    private static Index build(ResourceManager resources, List<ResourceLocation> tables) {
+    private static Index build(Map<ResourceLocation,LootTable> tables) {
         Index index = new Index();
-        for (var table : tables) {
-            try (var reader = definition(resources, table).openAsReader()) {
-                index.add(table.toString(), JsonParser.parseReader(reader).getAsJsonObject());
-            } catch (RuntimeException | IOException failure) {
+        for (var entry : tables.entrySet()) {
+            try {
+                index.add(entry.getKey().toString(), TABLE_JSON.toJsonTree(entry.getValue(),LootTable.class).getAsJsonObject());
+            } catch (RuntimeException failure) {
                 index.unreadable++;
             }
         }
@@ -165,25 +184,22 @@ final class WzLoot {
         return object.has(key) && object.get(key).isJsonArray() ? object.getAsJsonArray(key) : new JsonArray();
     }
 
-    private static JsonObject detail(ResourceManager resources, ResourceLocation table, int page) {
+    private static JsonObject detail(LootTable active, ResourceLocation table, int page) {
         try {
-            Resource resource = definition(resources, table);
-            String json;
-            try (var reader = resource.openAsReader()) {
-                json = JsonParser.parseReader(reader).toString();
-            }
+            String json = TABLE_JSON.toJson(active,LootTable.class);
             int length = 4000;
             long start = (long)(page - 1) * length;
             if (start < 0 || start >= json.length()) return WzData.error("页码超出战利品表范围。");
-            JsonObject result = WenzhouReadTools.message("live", "最高优先级数据包定义，含掉落池、条件、数量及权重。");
+            JsonObject result = WenzhouReadTools.message("live", "当前运行中的掉落池、条件、数量及权重。");
             result.addProperty("table", table.toString());
-            result.addProperty("pack", resource.sourcePackId());
             result.addProperty("page", page);
             result.addProperty("more", start + length < json.length());
+            if (page == 1 && table.getPath().startsWith("gameplay/"))
+                result.add("trigger_references", WzLootTriggers.references(table));
             result.addProperty("definition", json.substring((int)start, (int)Math.min(json.length(), start + length)));
             return result;
-        } catch (IOException | RuntimeException failure) {
-            return WenzhouReadTools.message("unavailable", "未能读取这张已加载战利品表的数据包定义。");
+        } catch (RuntimeException failure) {
+            return WenzhouReadTools.message("unavailable", "无法读取当前运行中的掉落池。");
         }
     }
 

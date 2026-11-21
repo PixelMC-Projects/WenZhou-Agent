@@ -38,7 +38,11 @@ final class WzRegisteredItems {
                     .resolve("wenzhouai/lang-cache/1.20.1/assets"));
             vanilla.ifPresent(roots::add);
             ModList.get().getModFiles().forEach(file -> roots.add(file.getFile().findResource("assets")));
-            roots.add(FMLPaths.GAMEDIR.get().resolve("kubejs/assets"));
+            try {
+                roots.addAll(com.pixelmc.pixelmcmanager.api.PackGameplayApi.languageAssetRoots());
+            } catch (LinkageError oldManager) {
+                // An older Manager still permits normal mod and pack-language lookups.
+            }
             roots.add(FMLPaths.CONFIGDIR.get().resolve("wenzhouai/pack-language/assets"));
             Catalog catalog = from(rows, roots);
             return vanilla.isPresent() ? catalog

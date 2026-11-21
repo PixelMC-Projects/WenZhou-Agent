@@ -11,6 +11,9 @@ import static com.pixelmc.wenzhouai.service.WzData.string;
 
 /** Per-answer evidence handles cannot be reused by another player or turn. */
 final class WzTurnNotes {
+    private boolean personalGameplayRead;
+    boolean personalGameplayRead() { return personalGameplayRead; }
+
     private final WzGameplayMemory memory;
     private final UUID player;
     private final Set<String> subjects = new LinkedHashSet<>();
@@ -71,6 +74,10 @@ final class WzTurnNotes {
         return text.isEmpty() ? "" : "\n\n本会话可复查的代码位置（read_method）：" + text;
     }
     void observe(String kind, String target, JsonObject result) {
+        if (result.has("personal") && result.get("personal").isJsonObject()) {
+            personalGameplayRead=true;
+            return;
+        }
         String status = string(result, "status");
         if (kind.equals("calculate") && status.equals("calculated")) {
             source(result, "calculate " + string(result, "expression") + " = " + string(result, "result"));
@@ -118,6 +125,30 @@ final class WzTurnNotes {
                     subject("item", string(row, "item"));
                     if (row.has("detail")) source(row, "recipe " + row.getAsJsonArray("recipe_ids").get(0).getAsString());
                 }
+            }
+            case "structure_generation", "structure_chests", "chest_sources", "trade_offers" -> {
+                if (WzData.number(result,"total") > 0) {
+                    if (kind.equals("chest_sources")) subject("item",target);
+                    for (var value : result.getAsJsonArray("entries")) {
+                        var row = value.getAsJsonObject();
+                        if (row.has("loot_table")) subject("loot_table",string(row,"loot_table"));
+                        for (String side : java.util.List.of("cost","second_cost","gives"))
+                            if (row.has(side)) subject("item",string(row.getAsJsonObject(side),"item"));
+                    }
+                    source(result,kind+" "+target+" "+WzGameplayMemory.digest(result.toString()));
+                }
+            }
+            case "food_book_stats" -> {
+                if (result.has("book_total")) {
+                    subject("item", target);
+                    result.addProperty("memory_subject", "item/" + target);
+                    source(result, kind + " " + target + " " + WzGameplayMemory.digest(result.toString()));
+                }
+            }
+            case "worldgen_sources" -> {
+                if (result.has("places_block")) subject("item", target);
+                if (WzData.number(result, "total") > 0 || result.has("places_block"))
+                    source(result, kind + " " + target + " " + WzGameplayMemory.digest(result.toString()));
             }
             case "entity_spawns", "biome_tag", "machine_conversions" -> {
                 if (WzData.number(result, "total") > 0) {
@@ -225,34 +256,46 @@ final class WzTurnNotes {
     }
 
     private JsonObject save(WzGameplayMemory.Scope scope, JsonObject args) throws java.io.IOException {
-        for (String field : List.of("subject","facet","summary","detail")) {
-            if (!args.has(field) || !args.get(field).isJsonPrimitive() || !args.getAsJsonPrimitive(field).isString())
-                return WzGameplayMemory.invalid(field,"需要字符串。");
+        if (personalGameplayRead) return WzGameplayMemory.error("个人进度不保存到共享知识库。");
+        return save(memory, scope, args, subjects, sources);
+    }
+
+    static JsonObject save(WzGameplayMemory memory, WzGameplayMemory.Scope scope, JsonObject args,
+                           Set<String> subjects, List<String> sources) throws java.io.IOException {
+        var issues = new LinkedHashMap<String,String>();
+        var values = new HashMap<String,String>();
+        for (String field : List.of("subject", "facet", "summary", "detail")) {
+            var value = args.get(field);
+            if (value instanceof JsonPrimitive p && p.isString()) values.put(field, p.getAsString());
+            else { issues.put(field, "需要字符串。"); values.put(field, ""); }
         }
-        String topic = string(args, "subject");
+        String topic = values.get("subject");
         if (!subjects.contains(topic)) topic = "item/" + topic;
-        if (!subjects.contains(topic)) return WzGameplayMemory.invalid("subject","主题必须是本轮已核对的物品或资源 ID。");
-        for (String field : List.of("sources","keywords"))
-            if (!args.has(field) || !args.get(field).isJsonArray()) return WzGameplayMemory.invalid(field,"需要数组。");
-        int size=args.getAsJsonArray("sources").size();
-        if (size==0 || size>6) return WzGameplayMemory.invalid("sources","收到 "+size+" 个编号，需要 1–6 个。");
+        if (!subjects.contains(topic)) issues.putIfAbsent("subject", "主题必须是本轮已核对的资源 ID。");
         var refs = new LinkedHashSet<String>();
-        for (var value : args.getAsJsonArray("sources")) {
-            if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
-                return WzGameplayMemory.invalid("sources","需要整数编号。");
-            int index;
-            try { index = value.getAsBigDecimal().intValueExact() - 1; }
-            catch (ArithmeticException invalid) { return WzGameplayMemory.invalid("sources","编号必须是有效整数。"); }
-            if (index < 0 || index >= sources.size()) return WzGameplayMemory.invalid("sources","编号 "+value+" 未在本轮提供，可用来源数 "+sources.size()+"。");
-            refs.add(sources.get(index));
-        }
+        if (args.get("sources") instanceof JsonArray ids) {
+            if (ids.isEmpty() || ids.size() > 6)
+                issues.put("sources", "收到 " + ids.size() + " 个编号，需要 1–6 个，优先选 1–3 个。");
+            for (var value : ids) {
+                try {
+                    int n = value instanceof JsonPrimitive p && p.isNumber() ? p.getAsBigDecimal().intValueExact() : 0;
+                    if (n > 0 && n <= sources.size()) refs.add(sources.get(n - 1));
+                    else issues.putIfAbsent("sources", "请使用本轮提供的编号 1–" + sources.size() + "。");
+                } catch (ArithmeticException | NumberFormatException invalid) {
+                    issues.putIfAbsent("sources", "编号需要是有效整数。");
+                }
+            }
+        } else issues.put("sources", "需要编号数组。");
         var keywords = new ArrayList<String>();
-        for (var word : args.getAsJsonArray("keywords")) {
-            if (!word.isJsonPrimitive() || !word.getAsJsonPrimitive().isString())
-                return WzGameplayMemory.invalid("keywords["+keywords.size()+"]","需要字符串。");
-            keywords.add(word.getAsString().strip());
-        }
-        return memory.save(scope, topic, string(args, "facet"), string(args, "summary"), string(args, "detail"),
+        if (args.get("keywords") instanceof JsonArray words) {
+            for (var word : words) {
+                if (word instanceof JsonPrimitive p && p.isString()) keywords.add(p.getAsString().strip());
+                else { issues.put("keywords["+keywords.size()+"]", "需要字符串。"); keywords.add(""); }
+            }
+        } else issues.put("keywords", "需要关键词数组。");
+        WzGameplayMemory.validateText(issues, topic, values.get("facet"), values.get("summary"), values.get("detail"), keywords);
+        if (!issues.isEmpty()) return WzGameplayMemory.invalidFields(issues);
+        return memory.save(scope, topic, values.get("facet"), values.get("summary"), values.get("detail"),
                 keywords, List.copyOf(refs));
     }
     private static List<String> strings(JsonObject args, String key) {

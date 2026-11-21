@@ -67,3 +67,6 @@
   .wza-module .wza-grid.wza-chats { grid-template-columns:minmax(70px,1.4fr) minmax(60px,1fr) 46px minmax(75px,1fr); }
   .wza-module .wza-record { padding-inline:16px; }
 }
+
+.wza-module .wza-grid.wza-knowledge { grid-template-columns: minmax(160px,2fr) minmax(80px,1fr) repeat(2,minmax(114px,1fr)); }
+.wza-knowledge .player-identity small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

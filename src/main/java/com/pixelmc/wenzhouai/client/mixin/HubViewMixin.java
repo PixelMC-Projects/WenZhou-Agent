@@ -5,6 +5,7 @@ import com.pixelmc.hub.client.render.HubDraw;
 import com.pixelmc.hub.client.ui.HubView;
 import com.pixelmc.wenzhouai.client.WzHubAccess;
 import com.pixelmc.wenzhouai.client.WzPage;
+import com.pixelmc.wenzhouai.client.WzWorldPicker;
 
 import io.github.humbleui.skija.Matrix33;
 
@@ -192,8 +193,8 @@ abstract class HubViewMixin implements WzHubAccess, WzPage.Host {
 
     @Inject(method = "panelVisibility", at = @At("HEAD"))
     private void wenzhouai$closePanel(boolean open, CallbackInfo ci) {
-        if (open) wenzhouPage().invalidateStatus();
-        else if (wenzhouai$page != null) wenzhouai$page.closePanel();
+        if (open) WzWorldPicker.hubVisible(wenzhouPage());
+        else if (wenzhouai$page != null && !WzWorldPicker.containsDraft(wenzhouai$page)) wenzhouai$page.closePanel();
     }
 
     @Inject(method = "dismissOverlay", at = @At("HEAD"), cancellable = true)
@@ -233,7 +234,8 @@ abstract class HubViewMixin implements WzHubAccess, WzPage.Host {
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
     private void wenzhouai$key(
             int key, int scanCode, int mods, CallbackInfoReturnable<Boolean> cir) {
-        if (wenzhouPage().key(key, mods, focusId)) cir.setReturnValue(true);
+        if (WzWorldPicker.hubKey(wenzhouPage(), key, scanCode) || wenzhouPage().key(key, mods, focusId))
+            cir.setReturnValue(true);
     }
 
     @Inject(method = "charTyped", at = @At("HEAD"), cancellable = true)

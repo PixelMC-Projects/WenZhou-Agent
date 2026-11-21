@@ -30,6 +30,24 @@ public final class WenzhouReadTools {
 
     static CompletableFuture<JsonObject> query(MinecraftServer server, String mode, String kind,
                                                 String name, int page, String hints) {
+        return query(server, mode, kind, name, page, hints, null);
+    }
+
+    static CompletableFuture<JsonObject> query(MinecraftServer server, String mode, String kind,
+                                                String name, int page, String hints, java.util.UUID requester) {
+        return query(server,mode,kind,name,page,hints,requester,new WzPackContext(""));
+    }
+
+    static CompletableFuture<JsonObject> query(MinecraftServer server, String mode, String kind, String name,
+            int page, String hints, java.util.UUID requester, WzPackContext pack) {
+        return lookup(server,mode,kind,name,page,hints,requester)
+                .thenCompose(result -> pack.check(server,kind,name,hints,result));
+    }
+
+    private static CompletableFuture<JsonObject> lookup(MinecraftServer server, String mode, String kind, String name,
+            int page, String hints, java.util.UUID requester) {
+        if ("live".equals(mode) && WzManagerGameplay.TOOLS.contains(kind))
+            return WzManagerGameplay.read(requester,kind,name,page,hints);
         if ("read".equals(mode) && "command".equals(kind))
             return WenzhouCommands.run(server, name)
                     .exceptionally(ex -> message("unavailable", "这次只读命令未完成。"));
@@ -39,6 +57,11 @@ public final class WenzhouReadTools {
             return WzRegisteredItems.index(server).thenComposeAsync(catalog -> {
                 JsonObject result = catalog.index().find(name);
                 result.addProperty("unreadable_language_files", catalog.unreadableLanguageFiles());
+                if (WzData.number(result,"total")==0 && WzFoodBook.namesBook(name))
+                    return WzManagerGameplay.read(requester,"food_support","*",1,"").thenApply(support->{
+                        if ("mod_not_installed".equals(WzData.string(support,"status"))) result.addProperty("missing_mod","solcarrot");
+                        return result;
+                    });
                 if (!result.has("unique_item")) return CompletableFuture.completedFuture(result);
                 ResourceLocation item = ResourceLocation.tryParse(result.get("unique_item").getAsString());
                 return server.submit(() -> {
@@ -76,6 +99,7 @@ public final class WenzhouReadTools {
         return server.submit(
                         () -> {
                             if ("live".equals(mode)) {
+                                if ("worldgen_sources".equals(kind)) return WzWorldgenSources.query(server, id, page);
                                 if ("entity_spawns".equals(kind)) return WzSpawnEvidence.query(server, id, page);
                                 if ("biome_tag".equals(kind)) return CompletableFuture.completedFuture(
                                         WzSpawnEvidence.biomeTag(server.registryAccess().registryOrThrow(Registries.BIOME), id, page));
@@ -127,13 +151,15 @@ public final class WenzhouReadTools {
     }
 
     public static void refreshRecipeIndex(MinecraftServer server) {
-        WzPackChanges.clear();
+        WzLoot.clear();
+        WzWorldgenSources.clear();
         WzRecipeIndex.clear();
         WzRecipeIndex.get(server.getRecipeManager(), server.registryAccess());
     }
 
     public static void clearRecipeIndex() {
-        WzPackChanges.clear();
+        WzLoot.clear();
+        WzWorldgenSources.clear();
         WzRecipeIndex.clear();
     }
 

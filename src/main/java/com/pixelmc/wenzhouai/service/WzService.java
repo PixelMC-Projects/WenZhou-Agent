@@ -30,6 +30,7 @@ public final class WzService {
     private static final Set<String> ACTIONS =
             Set.of(
                     "status",
+                    "introSeen", "dismissItemChoice",
                     "policy",
                     "consent",
                     "research",
@@ -86,14 +87,38 @@ public final class WzService {
             WzNetwork.quotaChanged(current.server, player);
     }
 
+    public static CompletableFuture<Boolean> blockReferenceAccess(UUID player, long generation) {
+        Runtime current = active;
+        if (current == null) return CompletableFuture.completedFuture(false);
+        var reply = new CompletableFuture<Boolean>();
+        try {
+            current.controls.execute(() -> {
+                try {
+                    current.requireAccess(player, generation);
+                    reply.complete(true);
+                } catch (Exception unavailable) {
+                    reply.complete(false);
+                }
+            });
+        } catch (RejectedExecutionException busy) {
+            reply.complete(false);
+        }
+        return reply.completeOnTimeout(false, 5, TimeUnit.SECONDS);
+    }
+
     public static CompletableFuture<JsonObject> request(
             UUID player, String action, JsonObject body) {
+        return request(player, action, body, null);
+    }
+
+    public static CompletableFuture<JsonObject> request(
+            UUID player, String action, JsonObject body, WzWorldReferences.Ask world) {
         Runtime current = active;
         if (current == null || !ACTIONS.contains(action))
             return CompletableFuture.completedFuture(error("问舟操作不可用"));
         long generation = current.generation(player);
         if (action.equals("stop")) return CompletableFuture.completedFuture(current.stopAsk(player, body));
-        if (action.equals("ask")) return current.ask(player, body, generation)
+        if (action.equals("ask")) return current.ask(player, body, generation, world)
                 .thenCompose(message -> localizeLists(current.server, message));
         CompletableFuture<JsonObject> reply = new CompletableFuture<>();
         try {
@@ -158,22 +183,25 @@ public final class WzService {
 
     public static int sessionCount(UUID player) {
         Runtime current = requireRuntime();
-        JsonArray rows = current.history.index(player, -1).all();
-        LiveUsage running = current.liveFor(player, null, 0);
-        if (running != null) {
-            for (var row : rows)
-                if (running.conversation.equals(string(row.getAsJsonObject(), "id"))) return rows.size();
-            return rows.size() + 1;
+        synchronized (current.history) {
+            JsonArray rows = current.history.index(player, -1).all();
+            LiveUsage running = current.liveFor(player, null, 0);
+            if (running != null) {
+                for (var row : rows)
+                    if (running.conversation.equals(string(row.getAsJsonObject(), "id"))) return rows.size();
+                return rows.size() + 1;
+            }
+            return rows.size();
         }
-        return rows.size();
     }
 
     public static WzAdminBackend.SessionLists sessionSummaries(UUID player, boolean includeResearch) throws Exception {
         Runtime current = requireRuntime();
         var owners = new java.util.LinkedHashSet<UUID>();
         if (player == null) {
-            owners.addAll(current.history.players());
+            // Capture live owners first so a session completing during enumeration still has an owner.
             owners.addAll(current.live.keySet());
+            owners.addAll(current.history.players());
         } else owners.add(player);
 
         JsonArray all = new JsonArray();
@@ -189,9 +217,15 @@ public final class WzService {
                     since = current.researchSinceFields(fields);
                 } else since = current.researchSince(owner);
             }
-            WzHistory.SummaryIndex index = current.history.index(owner, since);
-            appendSessions(all, index.all(), owner, current.liveFor(owner, null, 0), false);
-            if (since > 0) appendSessions(research, index.research(), owner, current.liveFor(owner, null, since), true);
+            synchronized (current.history) {
+                WzHistory.SummaryIndex index = current.history.index(owner, since);
+                LiveUsage running = current.liveFor(owner, null, 0);
+                appendSessions(all, index.all(), owner, running, false);
+                if (since > 0) {
+                    appendSessions(research, index.research(), owner,
+                            running != null && running.createdAt >= since ? running : null, true);
+                }
+            }
         }
         return new WzAdminBackend.SessionLists(all, research);
     }
@@ -245,12 +279,10 @@ public final class WzService {
         long since = research ? current.researchSince(player) : 0;
         if (since < 0) throw new IllegalArgumentException("问舟会话不可用");
         synchronized (current.history) {
-            JsonArray turns =
-                    current.history.savedUsage(player, session, since);
+            var saved = current.history.savedThread(player, session, since);
             LiveUsage running = current.liveFor(player, session, since);
-            if (turns.isEmpty() && running == null) throw new IllegalArgumentException("问舟会话不可用");
-            return WzThreadUsage.merge(
-                    turns,
+            return WzStoredAdmin.usage(
+                    saved, since,
                     running == null ? null : running.receipts(),
                     running != null && running.missing);
         }
@@ -316,6 +348,7 @@ public final class WzService {
         final ConcurrentHashMap<UUID, Long> generations = new ConcurrentHashMap<>();
         final ConcurrentHashMap<UUID, Job> jobs = new ConcurrentHashMap<>();
         final ConcurrentHashMap<UUID, LiveUsage> live = new ConcurrentHashMap<>();
+        final Set<UUID> trialIntros = ConcurrentHashMap.newKeySet();
         final ConcurrentHashMap<UUID, JsonObject> trialReceipts = new ConcurrentHashMap<>();
         final ConcurrentHashMap<UUID, PolicyRead> policyReads = new ConcurrentHashMap<>();
 
@@ -538,6 +571,13 @@ public final class WzService {
                 }
                 status.addProperty("granted", access.granted && entryNotice.isEmpty());
                 if (!entryNotice.isEmpty()) status.addProperty("entryNotice", entryNotice);
+                if (access.granted && entryNotice.isEmpty()) {
+                    boolean seen = server.isDedicatedServer()
+                            ? DIRECTORY.read(player, WzDirectory.INTRO_SEEN).get(4, TimeUnit.SECONDS).get("value").getAsBoolean()
+                            : trialIntros.contains(player);
+                    status.addProperty("introSeen", seen);
+                    status.addProperty("blockReferences", true);
+                }
                 if (access.granted && quotaLedger != null)
                     status.add("quota", playerQuota(DIRECTORY.quota(player).get(8, TimeUnit.SECONDS)));
                 status.addProperty("consented", admitted);
@@ -611,6 +651,16 @@ public final class WzService {
                 return result;
             }
             if (!admitted(access)) return error("请先确认当前版本协议");
+            if (action.equals("introSeen")) {
+                if (!body.entrySet().isEmpty()) return error("引导确认参数无效");
+                check(player, generation);
+                if (server.isDedicatedServer()) DIRECTORY.markIntroSeen(player).get(8, TimeUnit.SECONDS);
+                else trialIntros.add(player);
+                check(player, generation);
+                JsonObject result = new JsonObject();
+                result.addProperty("introSeen", true);
+                return result;
+            }
             if (action.equals("usage")) return charges.account(player);
             synchronized (history) {
                 check(player, generation);
@@ -632,6 +682,17 @@ public final class WzService {
                 String id = string(body, "id");
                 JsonObject thread = object(all, id);
                 LiveUsage running = liveFor(player, id, 0);
+                if (action.equals("dismissItemChoice")) {
+                    if (flag(thread, "removed") || !thread.has("messages")) return error("未找到这段会话");
+                    var turns = thread.getAsJsonArray("messages");
+                    if (turns.isEmpty()) return error("物品选择已失效");
+                    var last = turns.get(turns.size() - 1).getAsJsonObject();
+                    if (!body.has("choiceId") || !string(body, "choiceId").equals(string(last, "requestId")))
+                        return error("物品选择已失效");
+                    if (last.remove("itemChoice") != null) history.save(player, all);
+                    result.addProperty("dismissed", true);
+                    return result;
+                }
                 if (action.equals("remove")) {
                     if (!WzHistory.removeForPlayer(
                             all, id, running != null, System.currentTimeMillis()))
@@ -693,7 +754,7 @@ public final class WzService {
             return result;
         }
 
-        CompletableFuture<JsonObject> ask(UUID player, JsonObject body, long generation) {
+        CompletableFuture<JsonObject> ask(UUID player, JsonObject body, long generation, WzWorldReferences.Ask world) {
             long receivedAt = System.currentTimeMillis();
             WzRunControl run = new WzRunControl(string(body, "requestId"));
             CompletableFuture<JsonObject> reply = new CompletableFuture<>();
@@ -703,7 +764,7 @@ public final class WzService {
                                 JsonObject result;
                                 try {
                                     run.begin();
-                                    result = answer(player, body, generation, run, receivedAt);
+                                    result = answer(player, body, generation, run, receivedAt, world);
                                 } catch (InterruptedException cancelled) {
                                     Thread.currentThread().interrupt();
                                     result = run.stopped() ? stoppedResult() : error("问舟请求已结束");
@@ -742,7 +803,8 @@ public final class WzService {
             check(player, generation);
         }
 
-        JsonObject answer(UUID player, JsonObject body, long generation, WzRunControl run, long receivedAt) throws Exception {
+        JsonObject answer(UUID player, JsonObject body, long generation, WzRunControl run, long receivedAt,
+                          WzWorldReferences.Ask world) throws Exception {
             String question = string(body, "question").strip();
             if (question.isEmpty() || question.length() > 1500) return error("请输入 1 至 1500 字的有效问题");
             requireAccess(player, generation);
@@ -784,6 +846,7 @@ public final class WzService {
                         if (turn.has("reply")) completedTurns.add(turn);
                     });
             var recent = completedTurns.subList(Math.max(0, completedTurns.size() - 4), completedTurns.size());
+            boolean privateHistory=recent.stream().anyMatch(t->flag(t,"personalFoodRead")||flag(t,"personalGameplayRead"));
             for (var turn : recent) {
                 context.add(message("user", string(turn, "question")));
                 context.add(message("assistant", string(turn, "answerText")));
@@ -792,6 +855,19 @@ public final class WzService {
                 var lastAnswer = context.get(context.size() - 1).getAsJsonObject();
                 lastAnswer.addProperty("content", string(lastAnswer, "content") + WzTurnNotes.followupRefs(recent));
             }
+            final JsonArray blockEvidence;
+            if (world != null) {
+                try {
+                    blockEvidence = server.submit(world.evidence()::get).get(5, TimeUnit.SECONDS);
+                } catch (java.util.concurrent.ExecutionException failure) {
+                    if (failure.getCause() instanceof WzWorldReferences.Rejected rejected) return error(rejected.getMessage());
+                    throw failure;
+                }
+                requireAccess(player, generation);
+            } else {
+                blockEvidence = new JsonArray();
+            }
+            var blockTools = new WzBlockTools(blockEvidence);
             String apiKey = key();
             long questionTime = choice == null ? createdAt : number(choice.turn, "createdAt");
             // A generated title can describe the oldest completed turn supplied to the model.
@@ -857,6 +933,7 @@ public final class WzService {
                                 event.addProperty("missing", true);
                                 WzNetwork.event(server, player, generation, event);
                             });
+            var packContext = new WzPackContext(question);
             WzReply rich = new WzReply(WenzhouReadTools::itemDisplayName);
             java.util.function.Consumer<JsonObject> sendDelta = update -> {
                 if (run.stopped() || session.hidden || liveFor(player, conversation, 0) != session) return;
@@ -905,7 +982,11 @@ public final class WzService {
                                             ? com.google.gson.JsonParser.parseString(target).getAsJsonObject() : null;
                                     String summaryHint = "read_memory".equals(kind)
                                             ? notes.listedSummary(string(memoryArgs, "id")) : "";
-                                    var activity = WzToolActivity.start(mode, kind, target, purpose, memoryArgs, summaryHint);
+                                    JsonObject blockInput = "block".equals(mode)
+                                            ? com.google.gson.JsonParser.parseString(target).getAsJsonObject() : null;
+                                    var activity = blockInput == null
+                                            ? WzToolActivity.start(mode, kind, target, purpose, memoryArgs, summaryHint)
+                                            : WzBlockToolActivity.start(kind, blockInput, blockEvidence);
                                     publicEvent(
                                                 player,
                                                 generation,
@@ -929,18 +1010,26 @@ public final class WzService {
                                                                     return CompletableFuture
                                                                             .completedFuture(
                                                                                     new JsonObject());
+                                                                if (blockInput != null) {
+                                                                    var result = world.inspect(blockInput, WzBlockTools.READ.equals(kind));
+                                                                    return CompletableFuture.completedFuture(result);
+                                                                }
                                                                 return WenzhouReadTools.query(
                                                                         server, mode, kind, target,
-                                                                        page, purpose);
+                                                                        page, purpose, player, packContext);
                                                             })
                                                     .thenCompose(result -> result)
                                                     .get(20, TimeUnit.SECONDS);
                                     check(player, generation);
                                     stopHidden(session);
-                                    rich.collect(mode, kind, target, evidence);
-                                    notes.observe(kind, target, evidence);
-                                    WzEvidenceSummary summary =
-                                            WzEvidenceSummary.from(mode, kind, evidence);
+                                    if (blockInput != null) evidence = blockTools.visibleResult(evidence);
+                                    else {
+                                        rich.collect(mode, kind, target, evidence);
+                                        notes.observe(kind, target, evidence);
+                                    }
+                                    WzEvidenceSummary summary = blockInput == null
+                                            ? WzEvidenceSummary.from(mode, kind, evidence)
+                                            : WzBlockToolActivity.detail(kind, blockInput, evidence);
                                     var finished = activity.finished(kind, evidence);
                                     publicEvent(
                                                 player,
@@ -955,11 +1044,16 @@ public final class WzService {
                                     return evidence;
                                 },
                                 usage,
-                                !confirmed && !context.isEmpty(), true, new WzDiagnostics(conversation, requestId),
+                                !confirmed && !context.isEmpty() && !(question.contains("[[item:") && !recent.isEmpty()
+                                        && recent.get(recent.size() - 1).has("itemChoice")), blockEvidence.isEmpty() && !privateHistory,
+                                new WzDiagnostics(conversation, requestId), blockTools,
                                 answer -> {
                                     String invalid = rich.unverifiedReferences(answer);
                                     if (!invalid.isEmpty()) sendDelta.accept(event("answer.reset", ""));
                                     return invalid;
+                                }, text -> {
+                                    if (!run.stopped() && !session.hidden && liveFor(player, conversation, 0) == session)
+                                        publicEvent(player, generation, events, conversation, "stage.report", text);
                                 });
             } catch (WenzhouChat.TopicConfirmation requested) {
                 topic = true;
@@ -990,12 +1084,14 @@ public final class WzService {
             if (version() != version) throw new InterruptedException();
             JsonObject turn = new JsonObject();
             turn.addProperty("question", question);
+            if (notes.personalGameplayRead() || privateHistory || !blockEvidence.isEmpty()) turn.addProperty("personalGameplayRead",true);
             if (completed != null) {
                 if (thinking) {
                     String summary = completed.summary();
                     publicEvent(player, generation, events, conversation, thoughtId, "progress",
                             summary.isEmpty() ? "已思考" : "思考 · " + summary, "", "");
                 }
+                if (completed.itemChoice() != null) turn.add("itemChoice", completed.itemChoice());
                 turn.addProperty("answerText", rich.answerText(completed.answer()));
                 var methodRefs = notes.methodRefs();
                 if (methodRefs.size() > 0) turn.add("methodRefs", methodRefs);

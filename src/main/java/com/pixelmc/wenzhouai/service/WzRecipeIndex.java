@@ -61,26 +61,19 @@ final class WzRecipeIndex {
                 for (Ingredient ingredient : recipe.getIngredients()) {
                     ingredient(inputs, ingredient, "ingredient", slot++);
                 }
-                var imbuement = WzMachineRecipes.imbuement(recipe);
-                if (imbuement != null) {
-                    output(products, imbuement.output(), "primary", null);
-                    ingredient(inputs, imbuement.input(), "chamber", 0);
-                    for (int i = 0; i < imbuement.pedestals().size(); i++)
-                        ingredient(inputs, imbuement.pedestals().get(i), "pedestal", i);
-                }
-                // Optional mod API. Its public result list preserves order, repeated items and chances.
-                if (recipe.getClass().getName().equals("vectorwing.farmersdelight.common.crafting.CuttingBoardRecipe")) {
-                    Ingredient tool = (Ingredient) recipe.getClass().getMethod("getTool").invoke(recipe);
-                    ingredient(inputs, tool, "tool", 0);
-                    var rolls = (List<?>) recipe.getClass().getMethod("getRollableResults").invoke(recipe);
-                    var cutting = new HashMap<Item,JsonArray>();
-                    for (int i = 0; i < rolls.size(); i++) {
-                        var roll = rolls.get(i);
-                        var stack = (ItemStack) roll.getClass().getMethod("getStack").invoke(roll);
-                        var chance = (Number) roll.getClass().getMethod("getChance").invoke(roll);
-                        output(cutting, stack, i == 0 ? "primary" : "additional", chance);
+                var extras = WzMachineRecipes.extras(recipe);
+                if (extras != null) {
+                    var additional = new HashMap<Item,JsonArray>();
+                    for (var product : extras.products())
+                        output(additional, product.item(), product.count(), product.role(), product.baseChance());
+                    for (var use : extras.uses()) {
+                        var data = new JsonObject();
+                        data.addProperty("role", use.role());
+                        data.addProperty("slot", use.slot());
+                        for (var item : use.items())
+                            inputs.computeIfAbsent(item, unused -> new JsonArray()).add(data);
                     }
-                    products = cutting;
+                    products = additional;
                 }
             } catch (ReflectiveOperationException | RuntimeException unsupported) {
                 incomplete = true;
@@ -97,11 +90,15 @@ final class WzRecipeIndex {
 
     private static void output(Map<Item,JsonArray> entries, ItemStack stack, String role, Number chance) {
         if (stack.isEmpty()) return;
+        output(entries, stack.getItem(), stack.getCount(), role, chance);
+    }
+
+    private static void output(Map<Item,JsonArray> entries, Item item, int count, String role, Number chance) {
         var data = new JsonObject();
         data.addProperty("role",role);
-        data.addProperty("count",stack.getCount());
+        data.addProperty("count",count);
         if (chance != null) data.addProperty("base_chance",chance);
-        entries.computeIfAbsent(stack.getItem(),unused -> new JsonArray()).add(data);
+        entries.computeIfAbsent(item,unused -> new JsonArray()).add(data);
     }
 
     private static void ingredient(Map<Item,JsonArray> entries, Ingredient ingredient, String role, int slot) {

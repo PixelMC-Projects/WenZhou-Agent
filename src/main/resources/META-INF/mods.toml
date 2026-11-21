@@ -35,6 +35,6 @@ side="BOTH"
 [[dependencies.wenzhouai]]
 modId="pixelmcmanager"
 mandatory=true
-versionRange="[0.9.0-dev,0.10)"
+versionRange="[0.9.1-dev,0.10)"
 ordering="AFTER"
 side="SERVER"

@@ -14,13 +14,14 @@ public final class WzDirectory {
     public static final String ID = "wenzhouai";
     public static final String STORAGE_MANIFEST = """
 {
-  "version":2,
+  "version":3,
   "name":"WenzhouAI",
   "label":"问舟AI",
   "scope":"global",
   "fields":[
     {"id":"access","type":"boolean","scope":"global","default":false,"maxBytes":32},
-    {"id":"agreement","type":"object","scope":"global","default":{},"maxBytes":4096}
+    {"id":"agreement","type":"object","scope":"global","default":{},"maxBytes":4096},
+    {"id":"intro_seen","type":"boolean","scope":"global","default":false,"maxBytes":32}
   ],
   "tables":["wz_quota_config","wz_quota_accounts","wz_quota_receipts"],
   "playerTables":[
@@ -31,6 +32,7 @@ public final class WzDirectory {
 """;
     public static final String GRANT = "access";
     public static final String RECEIPT = "agreement";
+    public static final String INTRO_SEEN = "intro_seen";
 
     private final java.util.function.Function<JsonObject, CompletableFuture<JsonObject>> transport;
 
@@ -118,6 +120,21 @@ public final class WzDirectory {
         return request(request);
     }
 
+    /** Monotonic per-player receipt. Concurrent acknowledgements converge on true. */
+    public CompletableFuture<JsonObject> markIntroSeen(UUID player) {
+        return read(player, INTRO_SEEN).thenCompose(current -> {
+            if (current.get("value").getAsBoolean()) return CompletableFuture.completedFuture(current);
+            JsonObject write = storageRequest("storage.set", player, INTRO_SEEN);
+            write.addProperty("value", true);
+            write.add("expectedRevision", current.get("revision"));
+            return request(write).exceptionallyCompose(failure ->
+                    read(player, INTRO_SEEN).thenCompose(latest ->
+                            latest.get("value").getAsBoolean()
+                                    ? CompletableFuture.completedFuture(latest)
+                                    : CompletableFuture.failedFuture(failure)));
+        });
+    }
+
     public CompletableFuture<JsonObject> saveReceipt(
             UUID player, JsonObject receipt, long revision) {
         JsonObject request = storageRequest("storage.set", player, RECEIPT);
@@ -160,7 +177,7 @@ public final class WzDirectory {
     }
 
     private static JsonObject storageRequest(String operation, UUID player, String field) {
-        if (!GRANT.equals(field) && !RECEIPT.equals(field))
+        if (!GRANT.equals(field) && !RECEIPT.equals(field) && !INTRO_SEEN.equals(field))
             throw new IllegalArgumentException("未知的问舟存储字段");
         JsonObject request = new JsonObject();
         request.addProperty("op", operation);

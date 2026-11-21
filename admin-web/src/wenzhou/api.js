@@ -1,6 +1,6 @@
 import {extensionRequest, request as managerRequest} from '@manager-console/transport.js';
 
-const liveReads = new Set(['sessions', 'thread', 'thread.usage']);
+const liveReads = new Set(['player', 'sessions', 'thread', 'thread.usage']);
 const liveWrites = new Set(['policy.draft', 'policy.publish', 'policy.visibility',
   'credential.set', 'credential.remove', 'reasoning.set']);
 

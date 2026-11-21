@@ -7,8 +7,36 @@ import com.google.gson.JsonObject;
 record WzEvidenceSummary(String outcome, String detail) {
     static WzEvidenceSummary from(String mode, String kind, JsonObject result) {
         String status = string(result, "status");
+        if (WzManagerGameplay.TOOLS.contains(kind) && !kind.equals("food_book_stats")) {
+            if (kind.equals("merchant_offers") && status.equals("last_seen"))
+                return new WzEvidenceSummary("已查阅","上次交易界面的报价 · "+number(result,"ageMs")/1000+" 秒前");
+            if(!status.equals("live"))return new WzEvidenceSummary(status.equals("mod_not_installed")?"未安装":"未取得结果",string(result,"message"));
+            if (result.has("entry")) {
+                var entry = result.getAsJsonObject("entry");
+                String detail = switch (string(entry,"available_now")) {
+                    case "yes" -> "当前可以交易";
+                    case "no" -> "当前交易条件未满足";
+                    default -> "有交易条件待核实";
+                };
+                return new WzEvidenceSummary("已核对",detail);
+            }
+            String group = switch (kind) {
+                case "shop_item" -> "匹配的商店交易";
+                case "quest_search" -> "可见任务";
+                case "quest_rewards" -> "匹配的任务奖励";
+                case "merchant_offers" -> "当前商人报价";
+                case "trade_offers" -> "可能出现的交易";
+                case "chest_sources","structure_chests" -> "宝箱来源线索";
+                default -> "查询结果";
+            };
+            return new WzEvidenceSummary("已查询",group+" "+number(result,"total")+" 项 · 第 "+Math.max(1,number(result,"page"))+" 页");
+        }
+        if (kind.equals("food_book_stats") && status.equals("mod_not_installed"))
+            return new WzEvidenceSummary("未安装", WzFoodBook.MISSING);
         if (kind.equals("skip_memory") && result.has("skipped"))
             return new WzEvidenceSummary("未写入", "未写入 · " + string(result, "skipped"));
+        if (kind.equals("save_memory") && status.equals("invalid_request"))
+            return new WzEvidenceSummary("正在整理", "正在调整玩法笔记");
         if ("memory".equals(mode) && !status.isEmpty())
             return new WzEvidenceSummary("记忆操作未完成", string(result, "message"));
         if ("pack_changes".equals(status))
@@ -26,6 +54,15 @@ record WzEvidenceSummary(String outcome, String detail) {
             case "invalid_calculation" -> new WzEvidenceSummary("无法计算", string(result, "message"));
             case "live" ->
                     switch (kind) {
+                        case "food_book_stats" -> {
+                            var personal = result.getAsJsonObject("personal");
+                            String detail = personal != null && "live".equals(string(personal,"status"))
+                                    ? "已收集 " + number(personal,"collected") + " / " + number(result,"book_total") + " 种"
+                                    : "手册可收集 " + number(result,"book_total") + " 种食物";
+                            yield new WzEvidenceSummary("已统计", detail);
+                        }
+                        case "worldgen_sources" -> new WzEvidenceSummary("已查询", number(result, "total") == 0
+                                ? "已核对的地物中未找到匹配" : "匹配 " + number(result, "biome_count") + " 个群系");
                         case "entity_spawns" -> new WzEvidenceSummary("已查询", "群系表 " + number(result, "biome_entries") + " 项 · 生成配置 " + number(result, "targeted_config_rules") + " 条");
                         case "biome_tag" -> new WzEvidenceSummary("已核对", "群系标签含 " + number(result, "total") + " 个群系");
                         case "machine_conversions" -> new WzEvidenceSummary("已核对", "铜锅转换匹配 " + number(result, "total") + " 个烹饪配方");

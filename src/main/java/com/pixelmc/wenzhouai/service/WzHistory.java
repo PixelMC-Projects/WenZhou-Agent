@@ -27,7 +27,8 @@ final class WzHistory {
 
     record SummaryIndex(JsonArray all, JsonArray research, long since, long expiresAt,
                         Object fileVersion) {}
-    private record UsageSnapshot(UUID player, String session, long since, long expiresAt, JsonArray turns) {}
+    private record UsageSnapshot(UUID player, String session, long since, long expiresAt,
+                                 Object fileVersion, WzStoredAdmin.SavedThread thread) {}
 
     WzHistory(Path directory) {
         this(directory, false);
@@ -160,14 +161,16 @@ final class WzHistory {
         return index;
     }
 
-    synchronized JsonArray savedUsage(UUID player, String session, long since) {
+    synchronized WzStoredAdmin.SavedThread savedThread(UUID player, String session, long since) {
         UsageSnapshot cached = lastUsage;
+        Object version = readOnly ? fileVersion(player) : null;
         if (cached != null && cached.player.equals(player) && cached.session.equals(session)
-                && cached.since == since && System.currentTimeMillis() < cached.expiresAt) return cached.turns;
+                && cached.since == since && java.util.Objects.equals(version, cached.fileVersion)
+                && System.currentTimeMillis() < cached.expiresAt) return cached.thread;
         JsonObject all = load(player);
-        JsonArray turns = usageTurns(object(all, session), since);
-        lastUsage = new UsageSnapshot(player, session, since, expiresAt(all), turns);
-        return turns;
+        var thread = WzStoredAdmin.snapshot(object(all, session), since);
+        lastUsage = new UsageSnapshot(player, session, since, expiresAt(all), version, thread);
+        return thread;
     }
 
     private static long expiresAt(JsonObject all) {

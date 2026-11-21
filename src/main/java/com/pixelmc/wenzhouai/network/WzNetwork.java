@@ -3,6 +3,8 @@ package com.pixelmc.wenzhouai.network;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.pixelmc.wenzhouai.service.WzService;
+import com.pixelmc.wenzhouai.service.WzWorldReferences;
+import net.minecraft.core.BlockPos;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
@@ -35,6 +37,7 @@ public final class WzNetwork {
 
     private static final class Connection {
         final ServerPlayer player;
+        final WzWorldReferences worldReferences = new WzWorldReferences();
         int requests;
         int pending;
         long window = System.nanoTime();
@@ -147,7 +150,36 @@ public final class WzNetwork {
             return;
         }
         long generation = WzService.generation(id);
-        WzService.request(id, request.action, body)
+        java.util.concurrent.CompletableFuture<JsonObject> work;
+        try {
+            if (request.action.equals("block.capture")) {
+                if (body.size() != 1 || !body.has("pos") || !body.getAsJsonPrimitive("pos").isString())
+                    throw new IllegalArgumentException();
+                var look = WzWorldReferences.look(player, BlockPos.of(Long.parseLong(body.get("pos").getAsString())));
+                work = WzService.blockReferenceAccess(id, generation).thenCompose(admitted ->
+                        server.submit(() -> {
+                            if (!admitted || !current(server, connection, id) || generation != WzService.generation(id))
+                                return fail("当前没有问舟方块引用权限。");
+                            try {
+                                return connection.worldReferences.capture(player, look, generation);
+                            } catch (WzWorldReferences.Rejected refused) {
+                                return fail(refused.getMessage());
+                            }
+                        }));
+            } else {
+                var world = request.action.equals("ask") ? connection.worldReferences.attach(player, body, generation) : null;
+                work = WzService.request(id, request.action, body, world);
+            }
+        } catch (WzWorldReferences.Rejected refused) {
+            connection.pending--;
+            respond(player, request.id, fail(refused.getMessage()));
+            return;
+        } catch (RuntimeException invalid) {
+            connection.pending--;
+            respond(player, request.id, fail("问舟操作参数无效"));
+            return;
+        }
+        work
                 .whenComplete(
                         (message, error) ->
                                 server.execute(
