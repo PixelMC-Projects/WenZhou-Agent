@@ -42,7 +42,7 @@ tasks.named('jar', Jar) {
             'MixinConfigs': 'wenzhouai.client.mixins.json')
     from('LICENSE','NOTICE.md')
     into('licenses/wenzhou-admin') {
-        from('admin-web/LICENSE', 'admin-web/LICENSE-EXCEPTION.md', 'admin-web/NOTICE.md')
+        from('admin-web/LICENSE', 'admin-web/NOTICE.md')
     }
     finalizedBy 'reobfJar'
 }

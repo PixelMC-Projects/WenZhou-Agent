@@ -1,6 +1,6 @@
 modLoader="javafml"
 loaderVersion="[47,48)"
-license="Apache-2.0 (mod); AGPL-3.0-only (Manager administration UI, see notices)"
+license="Apache-2.0"
 issueTrackerURL="https://github.com/PixelMC-Projects/WenZhou-Agent/issues"
 
 [[mods]]
