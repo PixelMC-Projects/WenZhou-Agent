@@ -1,4 +1,5 @@
 {
   "key.categories.wenzhouai": "Wenzhou",
-  "key.wenzhouai.select_block": "Reference a world block"
+  "key.wenzhouai.select_block": "Reference a world block",
+  "key.wenzhouai.quick_ask_item": "Ask Wenzhou about item"
 }

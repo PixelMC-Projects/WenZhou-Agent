@@ -55,3 +55,4 @@ public final class SelectionMotion<T> {
     public float card(){return smooth((panelTime-EDGE-WIRE)/CARD);}
     public static float smooth(double t){t=Math.max(0,Math.min(1,t));return (float)(t*t*(3-2*t));}
 }
+

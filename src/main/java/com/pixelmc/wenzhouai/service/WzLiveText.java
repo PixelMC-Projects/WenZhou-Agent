@@ -53,7 +53,10 @@ final class WzLiveText implements WzCompletionStream.Preview {
                     int tokenEnd = pending.indexOf("]]", i + 2);
                     if (tokenEnd < 0) break;
                     String token = pending.substring(i, tokenEnd + 2);
-                    if (token.equals("[[wz-summary]]")) { hidden = true; break; }
+                    if (token.equals("[[wz-summary]]") || token.equals(WzResponses.TITLE_MARK)) {
+                        hidden = true;
+                        break;
+                    }
                     if (token.startsWith("[[item:") || token.startsWith("[[stack:")) {
                         if (itemDelta == null) ready.append(itemName.apply(token));
                         else {

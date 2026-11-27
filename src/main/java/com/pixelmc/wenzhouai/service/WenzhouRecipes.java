@@ -357,7 +357,7 @@ final class WenzhouRecipes {
             return WenzhouReadTools.message("not_active", "这个配方 ID 当前未生效。");
         }
         var recipe = current.get();
-        var adapted = WzMachineRecipes.detail(recipe);
+        var adapted = WzMachineRecipes.detail(recipe, registries);
         if (adapted != null) return adapted;
         if (!SIMPLE_RECIPES.contains(recipe.getClass())) {
             var result = WenzhouReadTools.message("partial", "配方已加载。此工序的设备条件、材料和产出尚无读取适配。");

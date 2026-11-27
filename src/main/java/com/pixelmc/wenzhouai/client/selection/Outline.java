@@ -216,3 +216,4 @@ public abstract class Outline extends RenderType {
                 .uv(strip.widthNormal.x,strip.widthNormal.y).endVertex();
     }
 }
+

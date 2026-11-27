@@ -50,8 +50,10 @@ final class WzDiagnostics {
     void model(long started, JsonObject receipt, Exception failure) {
         var row = event("model", started);
         row.addProperty("receiptAvailable", receipt != null);
-        if (receipt != null) for (String key : List.of("hit","miss","output","reasoning","nanoYuan"))
+        if (receipt != null) for (String key : List.of("billing","hit","miss","output","reasoning","nanoYuan"))
             if (receipt.has(key)) row.add(key, receipt.get(key));
+        if (failure instanceof WenzhouChat.Notice notice && notice.diagnostic != null)
+            notice.diagnostic.entrySet().forEach(entry -> row.add(entry.getKey(), entry.getValue()));
         if (failure != null) failure(row, failure);
         append(row);
     }

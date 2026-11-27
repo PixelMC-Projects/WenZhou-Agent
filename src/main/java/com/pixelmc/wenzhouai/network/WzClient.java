@@ -58,6 +58,7 @@ public final class WzClient {
 
     @SubscribeEvent
     public static void logout(ClientPlayerNetworkEvent.LoggingOut event) {
+        listener = ignored -> {};
         var old = new HashMap<>(PENDING);
         PENDING.clear();
         old.values().forEach(request -> request.complete(WzNetwork.fail("游戏连接已断开")));

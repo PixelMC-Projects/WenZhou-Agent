@@ -10,7 +10,7 @@ buildscript {
 apply plugin: 'net.minecraftforge.gradle'
 
 group = 'com.pixelmc.wenzhouai'
-version = '0.1.27-dev'
+version = '0.2.0'
 base { archivesName = 'wenzhouai-forge-1.20.1' }
 java { toolchain { languageVersion = JavaLanguageVersion.of(17) } }
 minecraft { mappings channel: 'official', version: '1.20.1' }
@@ -38,8 +38,7 @@ tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 apply from: 'gradle/gameplay-names.gradle'
 apply from: 'gradle/pinyin.gradle'
 tasks.named('jar', Jar) {
-    manifest.attributes('Implementation-Title': 'WenZhou Agent', 'Implementation-Version': project.version,
-            'MixinConfigs': 'wenzhouai.client.mixins.json')
+    manifest.attributes('Implementation-Title': 'WenZhou Agent', 'Implementation-Version': project.version)
     from('LICENSE','NOTICE.md')
     into('licenses/wenzhou-admin') {
         from('admin-web/LICENSE', 'admin-web/NOTICE.md')

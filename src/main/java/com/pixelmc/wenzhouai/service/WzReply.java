@@ -6,11 +6,12 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
+
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
@@ -24,33 +25,50 @@ final class WzReply {
     private static final Pattern CLAUSES = Pattern.compile("[，,。！？!?；;\n]|以及|另外|同时|顺便");
     private static final Pattern CRAFT = Pattern.compile("合成|配方|制作|打造|(?:怎么|如何|怎样)(?:做|摆)|工作台");
     private static final Pattern OBTAIN = Pattern.compile("获得|获取|得到|弄到|拿到|从哪|哪里|在哪|怎么来|怎么挖");
-    private static final Pattern OTHER_QUESTION = Pattern.compile("用途|用法|怎么用|如何使用|比较|对比|伤害|属性|掉率|商店|价格|限购|怎么修|有什么用");
-    private static final Pattern GRID_HEADER = Pattern.compile("左(?:列|格)?[|]中(?:列|格)?[|]右(?:列|格)?|第?1(?:列|格)[|]第?2(?:列|格)[|]第?3(?:列|格)");
+    private static final Pattern OTHER_QUESTION =
+            Pattern.compile("用途|用法|怎么用|如何使用|比较|对比|伤害|属性|掉率|商店|价格|限购|怎么修|有什么用");
+    private static final Pattern GRID_HEADER =
+            Pattern.compile(
+                    "左(?:列|格)?[|]中(?:列|格)?[|]右(?:列|格)?|第?1(?:列|格)[|]第?2(?:列|格)[|]第?3(?:列|格)");
     private static final Pattern GRID_INTRO = Pattern.compile(".*(?:合成|摆放|工作台|制作|配方|格子).*");
     private static final Pattern SOURCE_CHECK = Pattern.compile("未核实|未能核实|没有核实|未确认|未能确认|还不确定");
     private static final Pattern CONTROL = Pattern.compile("[\\p{Cc}&&[^\\n\\t]]");
     private static final int INLINE_ITEM_BYTES = 6500;
     // Only a delimited list label can be redundant. Ordinary prose before an item stays intact.
-    private static final Pattern LIST_LABEL = Pattern.compile(
-            "(?:[、，,][ \\t]*|(?:^|\\n)[ \\t]*[-•][ \\t]+)([^、，,\\n\\r]{1,160}?)[ \\t]*\\z");
+    private static final Pattern LIST_LABEL =
+            Pattern.compile(
+                    "(?:[、，,][ \\t]*|(?:^|\\n)[ \\t]*[-•][ \\t]+)([^、，,\\n\\r]{1,160}?)[ \\t]*\\z");
 
-    private static final Pattern PAREN_ALIAS = Pattern.compile("^[ \\t]*(?:（([^（）\\r\\n]{1,160})）|\\(([^()\\r\\n]{1,160})\\))");
+    private static final Pattern PAREN_ALIAS =
+            Pattern.compile("^[ \\t]*(?:（([^（）\\r\\n]{1,160})）|\\(([^()\\r\\n]{1,160})\\))");
 
-    record ListLabel(JsonArray parts, int position, String fragment, String label, String id, boolean leading) {
+    record ListLabel(
+            JsonArray parts,
+            int position,
+            String fragment,
+            String label,
+            String id,
+            boolean leading) {
         void localize(WzItemIndex index) {
             if (!index.hasDisplayName(id, label)) return;
             String text = parts.get(position).getAsString();
             if (leading && text.startsWith(fragment))
-                parts.set(position, new com.google.gson.JsonPrimitive(text.substring(fragment.length())));
+                parts.set(
+                        position,
+                        new com.google.gson.JsonPrimitive(text.substring(fragment.length())));
             if (!leading && text.endsWith(fragment))
-                parts.set(position, new com.google.gson.JsonPrimitive(text.substring(0, text.length() - fragment.length())));
+                parts.set(
+                        position,
+                        new com.google.gson.JsonPrimitive(
+                                text.substring(0, text.length() - fragment.length())));
         }
     }
 
     static List<ListLabel> listLabels(JsonObject message) {
         List<ListLabel> labels = new ArrayList<>();
         if (message.has("messages")) {
-            for (var turn : message.getAsJsonArray("messages")) collectLabels(turn.getAsJsonObject(), labels);
+            for (var turn : message.getAsJsonArray("messages"))
+                collectLabels(turn.getAsJsonObject(), labels);
         } else collectLabels(message, labels);
         return labels;
     }
@@ -65,17 +83,33 @@ final class WzReply {
             String key = string(parts.get(i).getAsJsonObject(), "item");
             String id = string(object(items, key), "id");
             if (id.isEmpty()) continue;
-            if (i + 1 < parts.size() && parts.get(i+1).isJsonPrimitive()) {
-                var after = PAREN_ALIAS.matcher(parts.get(i+1).getAsString());
-                if (after.find()) labels.add(new ListLabel(parts, i+1, after.group(),
-                        after.group(1) != null ? after.group(1) : after.group(2), id, true));
+            if (i + 1 < parts.size() && parts.get(i + 1).isJsonPrimitive()) {
+                var after = PAREN_ALIAS.matcher(parts.get(i + 1).getAsString());
+                if (after.find())
+                    labels.add(
+                            new ListLabel(
+                                    parts,
+                                    i + 1,
+                                    after.group(),
+                                    after.group(1) != null ? after.group(1) : after.group(2),
+                                    id,
+                                    true));
             }
-            if (i == 0 || !parts.get(i-1).isJsonPrimitive()) continue;
-            String text = parts.get(i-1).getAsString();
+            if (i == 0 || !parts.get(i - 1).isJsonPrimitive()) continue;
+            String text = parts.get(i - 1).getAsString();
             var match = LIST_LABEL.matcher(text);
-            if (match.find()) labels.add(new ListLabel(parts, i-1, text.substring(match.start(1)), match.group(1), id, false));
+            if (match.find())
+                labels.add(
+                        new ListLabel(
+                                parts,
+                                i - 1,
+                                text.substring(match.start(1)),
+                                match.group(1),
+                                id,
+                                false));
         }
     }
+
     private final Map<String, JsonObject> recipes = new HashMap<>();
     private final Map<String, JsonObject> stacks = new HashMap<>();
     private final Function<String, String> itemNames;
@@ -115,9 +149,14 @@ final class WzReply {
                 if (obtain && !craft) materials.addAll(items);
             }
             if (outputs.size() != 1) return null;
-            boolean specific = materials.size() <= 1 && all.size() == outputs.size() + materials.size()
-                    && !OTHER_QUESTION.matcher(question).find();
-            return new WorkbenchRequest(outputs.iterator().next(), materials.size() == 1 ? materials.iterator().next() : "", specific);
+            boolean specific =
+                    materials.size() <= 1
+                            && all.size() == outputs.size() + materials.size()
+                            && !OTHER_QUESTION.matcher(question).find();
+            return new WorkbenchRequest(
+                    outputs.iterator().next(),
+                    materials.size() == 1 ? materials.iterator().next() : "",
+                    specific);
         }
 
         JsonObject matchingRecipe(JsonObject overview) {
@@ -128,8 +167,10 @@ final class WzReply {
                 var detail = object(item, "detail");
                 var recipe = object(detail, "recipe");
                 String serializer = string(recipe, "serializer");
-                if (!string(detail, "status").equals("live") || !output.equals(string(object(recipe, "result"), "item"))
-                        || !(serializer.equals("minecraft:crafting_shaped") || serializer.equals("minecraft:crafting_shapeless"))) continue;
+                if (!string(detail, "status").equals("live")
+                        || !output.equals(string(object(recipe, "result"), "item"))
+                        || !(serializer.equals("minecraft:crafting_shaped")
+                                || serializer.equals("minecraft:crafting_shapeless"))) continue;
                 return recipe;
             }
             return new JsonObject();
@@ -138,14 +179,18 @@ final class WzReply {
         boolean includesMaterial(JsonObject recipe) {
             if (material.isEmpty()) return false;
             for (var ingredient : elements(recipe, "ingredients")) {
-                if (ingredient.isJsonObject() && material.equals(string(ingredient.getAsJsonObject(), "item"))) return true;
+                if (ingredient.isJsonObject()
+                        && material.equals(string(ingredient.getAsJsonObject(), "item")))
+                    return true;
             }
             return false;
         }
     }
 
     private static JsonArray elements(JsonObject value, String key) {
-        return value.has(key) && value.get(key).isJsonArray() ? value.getAsJsonArray(key) : new JsonArray();
+        return value.has(key) && value.get(key).isJsonArray()
+                ? value.getAsJsonArray(key)
+                : new JsonArray();
     }
 
     String completeAnswer(String modelText) {
@@ -158,11 +203,14 @@ final class WzReply {
         }
         if (requestedMaterialIsIngredient) {
             String toolName = acquisitionTool.isEmpty() ? null : itemNames.apply(acquisitionTool);
-            if (!acquisition.isEmpty() && !answer.contains(acquisition)
+            if (!acquisition.isEmpty()
+                    && !answer.contains(acquisition)
                     && (acquisitionTool.isEmpty() || !answer.contains(acquisitionTool))
                     && (toolName == null || !answer.contains(toolName))) {
                 answer += "\n\n" + acquisition;
-            } else if (acquisition.isEmpty() && !alternateSource && !SOURCE_CHECK.matcher(answer).find()) {
+            } else if (acquisition.isEmpty()
+                    && !alternateSource
+                    && !SOURCE_CHECK.matcher(answer).find()) {
                 answer += "\n\n[[item:" + workbench.material() + "]]的获得方法目前还未核实。";
             }
         }
@@ -181,22 +229,29 @@ final class WzReply {
         for (int start = 0; start + 4 < lines.length; start++) {
             String[] header = cells(lines[start]);
             String[] separator = cells(lines[start + 1]);
-            if (header.length != 3 || separator.length != 3
+            if (header.length != 3
+                    || separator.length != 3
                     || !GRID_HEADER.matcher(String.join("|", header)).matches()
-                    || !java.util.Arrays.stream(separator).allMatch(cell -> cell.matches(":?-{2,}:?"))) continue;
+                    || !java.util.Arrays.stream(separator)
+                            .allMatch(cell -> cell.matches(":?-{2,}:?"))) continue;
             int intro = start - 1;
             while (intro >= 0 && lines[intro].isBlank()) intro--;
             if (intro < 0 || !GRID_INTRO.matcher(lines[intro]).matches()) continue;
-            String[][] rows = {cells(lines[start + 2]), cells(lines[start + 3]), cells(lines[start + 4])};
+            String[][] rows = {
+                cells(lines[start + 2]), cells(lines[start + 3]), cells(lines[start + 4])
+            };
             if (!java.util.Arrays.stream(rows).allMatch(cells -> cells.length == 3)
                     || start + 5 < lines.length && cells(lines[start + 5]).length == 3) continue;
             boolean correct = true;
             for (int row = 0; row < 3; row++)
                 for (int column = 0; column < 3; column++)
-                    correct &= matchesIngredient(rows[row][column], selectedSlots.get(row * 3 + column));
+                    correct &=
+                            matchesIngredient(
+                                    rows[row][column], selectedSlots.get(row * 3 + column));
             if (!correct) {
                 java.util.Arrays.fill(lines, start, start + 5, "");
-                if (lines[intro].matches("(?:请)?按(?:照)?(?:下表|下面(?:的|这个)表|下方表格)(?:合成|制作|摆放)?[。:：]?$"))
+                if (lines[intro].matches(
+                        "(?:请)?按(?:照)?(?:下表|下面(?:的|这个)表|下方表格)(?:合成|制作|摆放)?[。:：]?$"))
                     lines[intro] = "工作台配方见下方配方卡。";
             }
         }
@@ -205,9 +260,11 @@ final class WzReply {
 
     private static String[] cells(String line) {
         String trimmed = line.strip();
-        if (trimmed.length() < 2 || !trimmed.startsWith("|") || !trimmed.endsWith("|")) return new String[0];
+        if (trimmed.length() < 2 || !trimmed.startsWith("|") || !trimmed.endsWith("|"))
+            return new String[0];
         return java.util.Arrays.stream(trimmed.substring(1, trimmed.length() - 1).split("\\|", -1))
-                .map(String::strip).toArray(String[]::new);
+                .map(String::strip)
+                .toArray(String[]::new);
     }
 
     private boolean matchesIngredient(String modelCell, JsonElement slot) {
@@ -217,17 +274,57 @@ final class WzReply {
             var stack = stacks.get(key.getAsString());
             if (stack == null) continue;
             String id = string(stack, "id");
-            if (cell.equals(id) || cell.equals("[[item:" + id + "]]")
+            if (cell.equals(id)
+                    || cell.equals("[[item:" + id + "]]")
                     || cell.equals("[[stack:" + key.getAsString() + "]]")
-                    || cell.equals(string(stack, "name")) || cell.equals(itemNames.apply(id))) return true;
+                    || cell.equals(string(stack, "name"))
+                    || cell.equals(itemNames.apply(id))) return true;
         }
         return false;
     }
 
     void collect(String mode, String kind, String id, JsonObject evidence) {
+        if ("item_sources".equals(kind) && "live".equals(string(evidence, "status"))) {
+            JsonObject recipesObj = object(evidence, "recipes");
+            if (recipesObj.has("recipe_detail") && recipesObj.get("recipe_detail").isJsonObject()) {
+                var ids = recipesObj.getAsJsonArray("recipe_ids");
+                if (ids != null && !ids.isEmpty()) {
+                    collect(
+                            "live",
+                            "recipe",
+                            ids.get(0).getAsString(),
+                            recipesObj.getAsJsonObject("recipe_detail"));
+                }
+            }
+            if (workbench != null && workbench.material().equals(id) && "live".equals(mode)) {
+                for (String branch :
+                        new String[] {
+                            "recipes",
+                            "loot_sources",
+                            "chest_sources",
+                            "worldgen",
+                            "shop",
+                            "quests",
+                            "trades"
+                        }) {
+                    JsonObject sub = object(evidence, branch);
+                    if ("live".equals(string(sub, "status")) && number(sub, "total") > 0) {
+                        alternateSource = true;
+                        break;
+                    }
+                }
+            }
+            return;
+        }
         if ("find_item".equals(kind) && evidence.has("recipe_detail")) {
-            collect("live", "recipe", evidence.getAsJsonObject("fixed_output_recipes")
-                    .getAsJsonArray("recipe_ids").get(0).getAsString(), evidence.getAsJsonObject("recipe_detail"));
+            collect(
+                    "live",
+                    "recipe",
+                    evidence.getAsJsonObject("fixed_output_recipes")
+                            .getAsJsonArray("recipe_ids")
+                            .get(0)
+                            .getAsString(),
+                    evidence.getAsJsonObject("recipe_detail"));
             return;
         }
         if ("item_overview".equals(kind) && evidence.has("items")) {
@@ -239,19 +336,29 @@ final class WzReply {
             for (var element : evidence.getAsJsonArray("items")) {
                 var row = element.getAsJsonObject();
                 if (row.has("detail"))
-                    collect("live", "recipe", row.getAsJsonArray("recipe_ids").get(0).getAsString(), row.getAsJsonObject("detail"));
+                    collect(
+                            "live",
+                            "recipe",
+                            row.getAsJsonArray("recipe_ids").get(0).getAsString(),
+                            row.getAsJsonObject("detail"));
             }
-            deterministicCard = !preflightRecipe.isEmpty() && addRecipe(new JsonObject(), new JsonObject(), preflightRecipe);
+            deterministicCard =
+                    !preflightRecipe.isEmpty()
+                            && buildRecipeCard(new JsonObject(), preflightRecipe) != null;
             return;
         }
-        if (workbench != null && workbench.material().equals(id) && "live".equals(mode)
-                && "event_outputs".equals(kind) && id.equals(string(evidence, "target"))) {
+        if (workbench != null
+                && workbench.material().equals(id)
+                && "live".equals(mode)
+                && "event_outputs".equals(kind)
+                && id.equals(string(evidence, "target"))) {
             for (var candidate : elements(evidence, "entries")) {
                 if (!candidate.isJsonObject()) continue;
                 var row = candidate.getAsJsonObject();
                 if (!"verified".equals(string(row, "confidence"))) continue;
                 for (var result : elements(row, "outputs")) {
-                    if (result.isJsonObject() && id.equals(string(result.getAsJsonObject(), "id"))
+                    if (result.isJsonObject()
+                            && id.equals(string(result.getAsJsonObject(), "id"))
                             && !string(row, "fact").isBlank()) {
                         acquisition = string(row, "fact").strip();
                         acquisitionTool = string(row, "tool");
@@ -261,10 +368,21 @@ final class WzReply {
             }
             return;
         }
-        if (workbench != null && workbench.material().equals(id) && "live".equals(mode)
+        if (workbench != null
+                && workbench.material().equals(id)
+                && "live".equals(mode)
                 && "live".equals(string(evidence, "status"))
-                && java.util.Set.of("recipes_for_item", "loot_sources", "chest_sources", "trade_offers",
-                        "merchant_offers", "quest_rewards", "shop_item", "worldgen_sources", "machine_conversions").contains(kind)
+                && java.util.Set.of(
+                                "recipes_for_item",
+                                "loot_sources",
+                                "chest_sources",
+                                "trade_offers",
+                                "merchant_offers",
+                                "quest_rewards",
+                                "shop_item",
+                                "worldgen_sources",
+                                "machine_conversions")
+                        .contains(kind)
                 && number(evidence, "total") > 0) alternateSource = true;
         JsonObject displayed = new JsonObject();
         String status = string(evidence, "status");
@@ -344,11 +462,12 @@ final class WzReply {
         var match = REFERENCE.matcher(answer);
         while (match.find() && missing.size() < 8) {
             String key = match.group(2);
-            boolean verified = switch (match.group(1)) {
-                case "item" -> itemNames.apply(key) != null;
-                case "stack" -> stacks.containsKey(key);
-                default -> recipes.containsKey(key);
-            };
+            boolean verified =
+                    switch (match.group(1)) {
+                        case "item" -> itemNames.apply(key) != null;
+                        case "stack" -> stacks.containsKey(key);
+                        default -> recipes.containsKey(key);
+                    };
             if (!verified) missing.add(match.group());
         }
         return String.join("、", missing);
@@ -368,17 +487,39 @@ final class WzReply {
         return project(answer).plain.toString().strip();
     }
 
+    private static final int MAX_RECIPE_CARDS = 4;
+
     JsonObject render(String answer) {
         Projection projection = project(answer);
         JsonObject reply = new JsonObject();
         if (projection.inline) reply.add("text", projection.parts);
         else reply.addProperty("text", projection.plain.toString().strip());
-        if (!deterministicCard || !addRecipe(reply, projection.items, preflightRecipe)) {
-            var ref = REFERENCE.matcher(answer);
-            while (ref.find()) {
-                if (!ref.group(1).equals("recipe")) continue;
-                if (addRecipe(reply, projection.items, ref.group(2))) break;
+        JsonArray cards = new JsonArray();
+        var addedIds = new LinkedHashSet<String>();
+        boolean hasAlternatives = false;
+        if (deterministicCard && !preflightRecipe.isEmpty()) {
+            JsonObject card = buildRecipeCard(projection.items, preflightRecipe);
+            if (card != null) {
+                addedIds.add(preflightRecipe);
+                if (card.has("slotAlternatives")) hasAlternatives = true;
+                cards.add(card);
             }
+        }
+        var ref = REFERENCE.matcher(answer);
+        while (ref.find() && cards.size() < MAX_RECIPE_CARDS) {
+            if (!ref.group(1).equals("recipe")) continue;
+            String recipeId = ref.group(2);
+            if (!addedIds.add(recipeId)) continue;
+            JsonObject card = buildRecipeCard(projection.items, recipeId);
+            if (card != null) {
+                if (card.has("slotAlternatives")) hasAlternatives = true;
+                cards.add(card);
+            }
+        }
+        if (cards.size() > 0) {
+            reply.add("recipe", cards.get(0));
+            if (cards.size() > 1) reply.add("recipes", cards);
+            if (hasAlternatives) reply.addProperty("note", "图中每格展示一种已核实的材料。部分槽位也接受其他候选材料。");
         }
         if (projection.items.size() > 0) reply.add("items", projection.items);
         return reply;
@@ -391,10 +532,17 @@ final class WzReply {
         int previous = 0;
         int itemBytes = 0;
         while (matcher.find()) {
-            result.text(source.substring(previous, matcher.start()));
+            String segment = source.substring(previous, matcher.start());
             previous = matcher.end();
             String kind = matcher.group(1), key = matcher.group(2);
-            if (kind.equals("recipe")) continue;
+            if (kind.equals("recipe")) {
+                // Trim dangling horizontal spaces right before a stripped recipe marker so empty
+                // indented lines don't remain.
+                segment = segment.replaceAll("[ \\t]+$", "");
+                result.text(segment);
+                continue;
+            }
+            result.text(segment);
             JsonObject item = kind.equals("stack") ? localized(stacks.get(key)) : item(key, "");
             if (item == null) {
                 if (kind.equals("item")) result.text(key);
@@ -405,7 +553,9 @@ final class WzReply {
             int size =
                     result.items.has(localKey)
                             ? 0
-                            : localKey.length() + 4 + item.toString().getBytes(StandardCharsets.UTF_8).length;
+                            : localKey.length()
+                                    + 4
+                                    + item.toString().getBytes(StandardCharsets.UTF_8).length;
             if (itemBytes + size > INLINE_ITEM_BYTES) {
                 result.text(name);
                 continue;
@@ -422,16 +572,16 @@ final class WzReply {
         return result;
     }
 
-    private boolean addRecipe(JsonObject reply, JsonObject items, String id) {
+    private JsonObject buildRecipeCard(JsonObject items, String id) {
         JsonObject data = recipes.get(id);
-        if (data == null || !data.has("display_slots")) return false;
+        if (data == null || !data.has("display_slots")) return null;
         String serializer = string(data, "serializer");
         boolean shaped = serializer.equals("minecraft:crafting_shaped");
-        if (!shaped && !serializer.equals("minecraft:crafting_shapeless")) return false;
+        if (!shaped && !serializer.equals("minecraft:crafting_shapeless")) return null;
         String outputKey = string(data, "display_output");
         JsonObject output = stacks.get(outputKey);
         long count = number(object(data, "result"), "count");
-        if (output == null || count < 1 || count > Integer.MAX_VALUE) return false;
+        if (output == null || count < 1 || count > Integer.MAX_VALUE) return null;
         JsonArray ingredients = data.getAsJsonArray("display_slots");
         int width = shaped ? (int) number(data, "width") : Math.min(3, ingredients.size());
         int height = shaped ? (int) number(data, "height") : (ingredients.size() + 2) / 3;
@@ -440,22 +590,22 @@ final class WzReply {
                 || height < 1
                 || height > 3
                 || ingredients.size() > 9
-                || (shaped && ingredients.size() != width * height)) return false;
+                || (shaped && ingredients.size() != width * height)) return null;
         JsonArray slots = new JsonArray();
         JsonObject cardItems = new JsonObject();
         JsonObject alternatives = new JsonObject();
         for (JsonElement ingredient : ingredients) {
             if (ingredient.isJsonNull()) {
-                if (!shaped) return false;
+                if (!shaped) return null;
                 slots.add(JsonNull.INSTANCE);
                 continue;
             }
             JsonObject group = ingredient.getAsJsonObject();
             JsonArray keys = group.getAsJsonArray("keys");
-            if (keys.size() == 0) return false;
+            if (keys.size() == 0) return null;
             String key = keys.get(0).getAsString();
             JsonObject item = stacks.get(key);
-            if (item == null) return false;
+            if (item == null) return null;
             if (number(group, "count") > 1) {
                 JsonArray linked = new JsonArray();
                 for (JsonElement choice : keys) {
@@ -476,12 +626,8 @@ final class WzReply {
         recipe.addProperty("output", "stack-" + outputKey);
         recipe.addProperty("count", count);
         recipe.addProperty("shapeless", !shaped);
-        if (alternatives.size() > 0) {
-            recipe.add("slotAlternatives", alternatives);
-            reply.addProperty("note", "图中每格展示一种已核实的材料。部分槽位也接受其他候选材料。");
-        }
-        reply.add("recipe", recipe);
-        return true;
+        if (alternatives.size() > 0) recipe.add("slotAlternatives", alternatives);
+        return recipe;
     }
 
     private JsonObject localized(JsonObject stack) {

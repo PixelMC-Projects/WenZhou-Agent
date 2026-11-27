@@ -14,25 +14,45 @@ public final class WzDirectory {
     public static final String ID = "wenzhouai";
     public static final String STORAGE_MANIFEST = """
 {
-  "version":3,
+  "version":6,
   "name":"WenzhouAI",
   "label":"问舟AI",
   "scope":"global",
   "fields":[
     {"id":"access","type":"boolean","scope":"global","default":false,"maxBytes":32},
     {"id":"agreement","type":"object","scope":"global","default":{},"maxBytes":4096},
-    {"id":"intro_seen","type":"boolean","scope":"global","default":false,"maxBytes":32}
+    {"id":"reminders","type":"object","scope":"global","default":{},"maxBytes":512},
+    {"id":"received_shares","type":"object","scope":"global","default":{},"maxBytes":65536},
+    {"id":"intro_seen","type":"boolean","scope":"global","default":false,"maxBytes":32},
+    {"id":"model_preferences","type":"object","scope":"global","default":{},"maxBytes":8192}
   ],
-  "tables":["wz_quota_config","wz_quota_accounts","wz_quota_receipts"],
+  "tables":["wz_quota_config","wz_quota_accounts","wz_quota_receipts","wz_terra_config","wz_terra_grants","wz_terra_balances","wz_terra_receipts"],
   "playerTables":[
     {"table":"wz_quota_accounts","column":"uuid"},
-    {"table":"wz_quota_receipts","column":"uuid"}
+    {"table":"wz_quota_receipts","column":"uuid"},
+    {"table":"wz_terra_grants","column":"uuid"}
   ]
 }
 """;
     public static final String GRANT = "access";
     public static final String RECEIPT = "agreement";
     public static final String INTRO_SEEN = "intro_seen";
+
+    public static final String MODEL_PREFERENCES = "model_preferences";
+
+    public CompletableFuture<JsonObject> savePersonal(UUID player, String field, JsonObject value, long revision) {
+        var input = storageRequest("storage.set", player, field);
+        input.add("value", value);
+        input.addProperty("expectedRevision", revision);
+        return request(input);
+    }
+
+    public CompletableFuture<JsonObject> saveModelPreferences(UUID owner, JsonObject value, long revision) {
+        var input = storageRequest("storage.set", owner, MODEL_PREFERENCES);
+        input.add("value", value.deepCopy());
+        input.addProperty("expectedRevision", revision);
+        return request(input);
+    }
 
     private final java.util.function.Function<JsonObject, CompletableFuture<JsonObject>> transport;
 
@@ -177,7 +197,8 @@ public final class WzDirectory {
     }
 
     private static JsonObject storageRequest(String operation, UUID player, String field) {
-        if (!GRANT.equals(field) && !RECEIPT.equals(field) && !INTRO_SEEN.equals(field))
+        if (!GRANT.equals(field) && !RECEIPT.equals(field) && !INTRO_SEEN.equals(field) && !MODEL_PREFERENCES.equals(field)
+                && !"reminders".equals(field) && !"received_shares".equals(field))
             throw new IllegalArgumentException("未知的问舟存储字段");
         JsonObject request = new JsonObject();
         request.addProperty("op", operation);

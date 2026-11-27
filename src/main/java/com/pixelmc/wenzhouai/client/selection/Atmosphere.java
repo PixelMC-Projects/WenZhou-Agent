@@ -170,3 +170,4 @@ public final class Atmosphere {
         return r<<16|g<<8|bl;
     }
 }
+

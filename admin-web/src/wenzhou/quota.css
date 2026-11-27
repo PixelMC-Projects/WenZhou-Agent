@@ -8,12 +8,9 @@
 .wza-module .wza-amount-value > span { margin:0; }
 .wza-module .wza-quota-controls { flex-wrap:nowrap; }
 .wza-module .wza-quota-controls > button { white-space:nowrap; flex:none; }
-.wza-module .content-area[data-agreement] .wza-grid.wza-players {
-  grid-template-columns:minmax(120px,2fr) minmax(48px,.7fr) minmax(54px,.8fr) minmax(46px,.6fr) minmax(62px,.8fr) minmax(65px,.8fr) minmax(85px,1fr);
-  gap:clamp(5px,1vw,15px);
-}
-.wza-module .content-area[data-agreement="hidden"] .wza-grid.wza-players {
+.wza-module .content-area .wza-grid.wza-players {
   grid-template-columns:minmax(120px,2fr) minmax(48px,.7fr) minmax(46px,.6fr) minmax(62px,.8fr) minmax(65px,.8fr) minmax(85px,1fr);
+  gap:clamp(5px,1vw,15px);
 }
 .wza-module .wza-quota-remaining { display:inline-flex; align-items:center; gap:5px; width:max-content; max-width:100%; }
 .wza-module .wza-quota-ring { width:15px; height:15px; flex:none; border-radius:50%; background:conic-gradient(var(--accent) var(--quota-fill),var(--border) 0); mask:radial-gradient(circle,transparent 4px,#000 5px); }

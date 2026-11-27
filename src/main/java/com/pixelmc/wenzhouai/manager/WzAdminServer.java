@@ -241,6 +241,10 @@ public final class WzAdminServer implements AutoCloseable {
         exchange.getResponseBody().write(payload);
     }
 
+    public UUID ownerPlayerUuid() {
+        return ownerPlayerUuid;
+    }
+
     @Override
     public void close() {
         listener.stop(0);

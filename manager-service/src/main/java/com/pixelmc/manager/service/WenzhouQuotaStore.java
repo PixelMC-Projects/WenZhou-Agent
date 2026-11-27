@@ -10,12 +10,19 @@ import com.google.gson.JsonPrimitive;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 /** Durable WenZhou budgets. The profile row serializes all mutations for one player. */
 final class WenzhouQuotaStore {
-    static final Set<String> TABLES = Set.of("wz_quota_config", "wz_quota_accounts", "wz_quota_receipts");
+    static final Set<String> TABLES = durableTables();
+
+    private static Set<String> durableTables() {
+        Set<String> tables = new HashSet<>(WzTerraLedger.TABLES);
+        tables.addAll(Set.of("wz_quota_config", "wz_quota_accounts", "wz_quota_receipts"));
+        return Set.copyOf(tables);
+    }
     private static final long WEEK = 7 * 24 * 60 * 60_000L;
     private static final long MAX_AMOUNT = 9_007_199_254_740_991L;
 
@@ -41,6 +48,7 @@ final class WenzhouQuotaStore {
         update(c, "ALTER TABLE wz_quota_accounts ADD COLUMN IF NOT EXISTS limited_mode VARCHAR(12) NULL,"
                 + " ADD COLUMN IF NOT EXISTS has_custom BOOLEAN NOT NULL DEFAULT FALSE");
         update(c, "INSERT IGNORE INTO wz_quota_config(id,enabled,weekly_limit) VALUES(1,FALSE,2000000000)");
+        WzTerraLedger.migrate(c);
     }
 
     static JsonObject request(ManagerStore store, String owner, String op, JsonObject in) throws Exception {

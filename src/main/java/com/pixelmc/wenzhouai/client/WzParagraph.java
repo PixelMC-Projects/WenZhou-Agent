@@ -23,6 +23,10 @@ final class WzParagraph {
     private List<Part> row = new ArrayList<>();
     private float cursor;
 
+    WzParagraph(List<Line> measured) {
+        lines.addAll(measured);
+    }
+
     WzParagraph(HubDraw draw, float width, float size, List<Run> runs) {
         width = Math.max(1, width);
         for (Run run : runs) {

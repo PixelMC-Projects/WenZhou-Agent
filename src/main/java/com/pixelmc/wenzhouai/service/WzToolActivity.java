@@ -1,9 +1,11 @@
 package com.pixelmc.wenzhouai.service;
 
+import static com.pixelmc.wenzhouai.service.WzData.string;
+
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+
 import java.util.StringJoiner;
-import static com.pixelmc.wenzhouai.service.WzData.string;
 
 /** Public projection of a tool call. Memory bodies and command text stay out of the timeline. */
 record WzToolActivity(String action, String target, String icon) {
@@ -51,7 +53,9 @@ record WzToolActivity(String action, String target, String icon) {
             case "entity_spawns" -> new WzToolActivity("查询生物生成", target, "spawn");
             case "biome_tag" -> new WzToolActivity("查询群系标签", target, "biome");
             case "machine_conversions" -> new WzToolActivity("查询机器转换", target, "conversion");
+            case "find_entity" -> new WzToolActivity("查找生物", target, "spawn");
             case "find_item" -> new WzToolActivity("查找物品", target, "item");
+            case "item_sources" -> new WzToolActivity("汇总获取来源", target, "loot");
             case "item_overview" -> new WzToolActivity("查阅引用物品", target.replace(",", "、"), "item");
             case "tag", "search_tags" -> new WzToolActivity("查询标签", target, "tag");
             case "item_tags" -> new WzToolActivity("反查物品标签", target, "tags");
@@ -81,8 +85,10 @@ record WzToolActivity(String action, String target, String icon) {
     }
 
     WzToolActivity finished(String kind, JsonObject result) {
-        if (kind.equals("merchant_offers") && string(result,"provenance").equals("last_seen"))
-            return new WzToolActivity("查看上次商人报价",target,icon);
+        if (kind.equals("find_item") && result.has("entity_matches"))
+            return new WzToolActivity("查找生物", target, "spawn");
+        if (kind.equals("merchant_offers") && string(result, "provenance").equals("last_seen"))
+            return new WzToolActivity("查看上次商人报价", target, icon);
         if (result.has("entry") || result.has("quest")) {
             var row = result.get(result.has("entry") ? "entry" : "quest");
             if (row.isJsonObject() && !string(row.getAsJsonObject(), "title").isBlank())

@@ -17,6 +17,8 @@ final class WzChargeLedger {
     }
 
     synchronized void record(UUID player, JsonObject receipt) {
+        if (WzThreadUsage.CHATGPT_PLAN.equals(string(receipt, "billing"))
+                || WzThreadUsage.OPENAI_API.equals(string(receipt, "billing"))) return;
         JsonObject entries = read(path);
         prune(entries);
         String day = Instant.now().atZone(ZoneOffset.UTC).toLocalDate().toString();

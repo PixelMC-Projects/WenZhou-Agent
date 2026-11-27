@@ -15,9 +15,9 @@ export function parseAmount(text) {
   return valid(result) ? result : null;
 }
 
-export function AmountInput({label, value, onChange, disabled}) {
+export function AmountInput({label, value, onChange, disabled, unit='元'}) {
   return <label className="wza-quota-amount"><span>{label}</span>
-    <span className="wza-amount-value"><input inputMode="decimal" autoComplete="off" value={value} onChange={e=>onChange(e.target.value)} disabled={disabled}/><span>元</span></span>
+    <span className="wza-amount-value"><input inputMode="decimal" autoComplete="off" value={value} onChange={e=>onChange(e.target.value)} disabled={disabled}/><span>{unit}</span></span>
   </label>;
 }
 

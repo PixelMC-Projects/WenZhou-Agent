@@ -20,7 +20,7 @@
 
 | 内容 | 位置和用途 |
 | --- | --- |
-| 玩家准入与协议回执 | Manager 全局玩家存储，扩展名 `wenzhouai`，字段 `access`、`agreement`、`intro_seen`（首次引导已展示状态） |
+| 玩家准入与协议回执 | Manager 全局玩家存储，扩展名 `wenzhouai`，字段 `access`、`agreement`、`intro_seen`（首次引导已展示状态）和 `model_preferences`（仅服主本人，记录选择的模型和每个模型的思考强度） |
 | 玩法知识 | `config/wenzhouai/memory/<scope>/memory.md`，Manager 通过既有只读挂载查看列表与正文 |
 | 已发布协议、草稿、可见性和思考强度 | Forge 实例 `config/wenzhouai/service.json`。初始协议随模组提供 |
 | 服主的服务密钥 | `config/wenzhouai/credential.json` 为 AES-GCM 密文，`credential-local-key.json` 存放本机解密材料。两份文件的读权限应限于运行账号；能读取两份文件的主机管理员可以解密 |

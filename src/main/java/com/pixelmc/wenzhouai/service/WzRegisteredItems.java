@@ -23,8 +23,22 @@ import net.minecraftforge.fml.loading.FMLPaths;
 
 /** Joins registered items' actual description keys to language assets once per resource reload. */
 final class WzRegisteredItems {
-    record Row(String id, String description, String display, String modName) {}
-    record Catalog(WzItemIndex index, int unreadableLanguageFiles) {}
+    record Row(String id, String description, String display, String modName, String entityLootTable) {
+        Row(String id, String description, String display, String modName) {
+            this(id, description, display, modName, null);
+        }
+    }
+    record Catalog(WzItemIndex index, WzEntityNames entities, int unreadableLanguageFiles) {
+        com.google.gson.JsonObject resolveName(String kind, String name) {
+            if ("find_entity".equals(kind)) return entities.find(name);
+            var item = index.find(name);
+            if (!item.has("error") && !Set.of("exact", "id", "id_pattern").contains(WzData.string(item, "match"))) {
+                var entity = entities.find(name);
+                if (WzData.number(entity, "total") > 0) return entity;
+            }
+            return item;
+        }
+    }
     private static final Map<ResourceManager, CompletableFuture<Catalog>> CACHE = new WeakHashMap<>();
     private static final int FILE_LIMIT = 4_000_000;
 
@@ -46,7 +60,7 @@ final class WzRegisteredItems {
             roots.add(FMLPaths.CONFIGDIR.get().resolve("wenzhouai/pack-language/assets"));
             Catalog catalog = from(rows, roots);
             return vanilla.isPresent() ? catalog
-                    : new Catalog(catalog.index(), catalog.unreadableLanguageFiles() + 1);
+                    : new Catalog(catalog.index(), catalog.entities(), catalog.unreadableLanguageFiles() + 1);
         }, Util.ioPool());
         CACHE.put(resources, index);
         return index;
@@ -62,6 +76,13 @@ final class WzRegisteredItems {
             String key = entry.getValue().getDescriptionId();
             String name = language.getOrDefault(key, "");
             rows.add(new Row(id.toString(), key, name, mods.getOrDefault(id.getNamespace(), id.getNamespace())));
+        }
+        for (var entry : BuiltInRegistries.ENTITY_TYPE.entrySet()) {
+            var id = entry.getKey().location();
+            var type = entry.getValue();
+            String key = type.getDescriptionId();
+            rows.add(new Row(id.toString(), key, language.getOrDefault(key, ""),
+                    mods.getOrDefault(id.getNamespace(), id.getNamespace()), type.getDefaultLootTable().toString()));
         }
         return rows;
     }
@@ -87,15 +108,20 @@ final class WzRegisteredItems {
                 unreadable++;
             }
         }
+        var entities = new WzEntityNames();
         List<WzItemIndex.Entry> items = new ArrayList<>(rows.size());
         for (Row row : rows) {
             List<String> zh = chinese.getOrDefault(row.description(), List.of());
             List<String> en = english.getOrDefault(row.description(), List.of());
             String display = !zh.isEmpty() ? zh.get(0) : !row.display().isEmpty() ? net.minecraft.ChatFormatting.stripFormatting(row.display())
                     : !en.isEmpty() ? en.get(0) : row.id();
-            items.add(new WzItemIndex.Entry(row.id(), row.modName(), display, zh, en));
+            if (row.entityLootTable() != null) {
+                entities.add(new WzEntityNames.Entry(row.id(), display, row.entityLootTable()), zh, en);
+            } else {
+                items.add(new WzItemIndex.Entry(row.id(), row.modName(), display, zh, en));
+            }
         }
-        return new Catalog(new WzItemIndex(items), unreadable);
+        return new Catalog(new WzItemIndex(items), entities, unreadable);
     }
 
     private static int read(Path path, Set<String> keys, Map<String,List<String>> lang) {

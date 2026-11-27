@@ -4,6 +4,7 @@ package com.pixelmc.wenzhouai.client;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.pixelmc.hub.client.ClientBootstrap;
+import com.pixelmc.hub.client.ClientHubSession;
 import com.pixelmc.hub.client.HubScreen;
 import com.pixelmc.hub.client.ui.HubView;
 import com.pixelmc.wenzhouai.client.selection.Atmosphere;
@@ -14,6 +15,7 @@ import com.pixelmc.wenzhouai.client.selection.SelectionMotion;
 import com.pixelmc.wenzhouai.client.selection.WzSelectionHud;
 import com.pixelmc.wenzhouai.network.WzBlockReference;
 import com.pixelmc.wenzhouai.network.WzClient;
+
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.PauseScreen;
@@ -40,6 +42,7 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
+
 import org.lwjgl.glfw.GLFW;
 
 import java.util.concurrent.TimeUnit;
@@ -48,15 +51,24 @@ import java.util.concurrent.TimeUnit;
 @Mod.EventBusSubscriber(modid = "wenzhouai", value = Dist.CLIENT)
 public final class WzWorldPicker {
     private static final long EXIT = 180_000_000L, RECEIPT = 200_000_000L;
-    private static final KeyMapping KEY = new KeyMapping("key.wenzhouai.select_block",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, "key.categories.wenzhouai");
+    private static final KeyMapping KEY =
+            new KeyMapping(
+                    "key.wenzhouai.select_block",
+                    InputConstants.Type.KEYSYM,
+                    GLFW.GLFW_KEY_UNKNOWN,
+                    "key.categories.wenzhouai");
 
-    private enum Phase { CLOSING, AIMING, CHECKING, LEAVING, RESTORING }
+    private enum Phase {
+        CLOSING,
+        AIMING,
+        CHECKING,
+        LEAVING,
+        RESTORING
+    }
 
     private record Target(BlockPos pos, BlockState state, OutlinePath path, String name) {}
 
     private static WzWorldPicker current;
-    private static HubView liveView;
     private final WzPage page;
     private final HubScreen origin;
     private final ClientPacketListener connection;
@@ -74,7 +86,8 @@ public final class WzWorldPicker {
     private String error;
     private WzBlockReference result;
 
-    private WzWorldPicker(Minecraft minecraft, HubScreen origin, WzPage page, boolean dark, boolean reduced) {
+    private WzWorldPicker(
+            Minecraft minecraft, HubScreen origin, WzPage page, boolean dark, boolean reduced) {
         this.page = page;
         this.origin = origin;
         this.level = minecraft.level;
@@ -87,27 +100,34 @@ public final class WzWorldPicker {
 
     static boolean begin(WzPage page, boolean dark, boolean reduced) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (current != null || !(minecraft.screen instanceof HubScreen origin) || minecraft.level == null
-                || minecraft.player == null || minecraft.player.isSpectator() || !WzClient.available()) return false;
+        if (current != null
+                || !(minecraft.screen instanceof HubScreen origin)
+                || minecraft.level == null
+                || minecraft.player == null
+                || minecraft.player.isSpectator()
+                || !WzClient.available()) return false;
         current = new WzWorldPicker(minecraft, origin, page, dark, reduced);
         return true;
     }
 
-    /** The Hub prepares this same view on login, before it creates any screen. */
-    public static void liveView(HubView view) {
-        liveView = view;
-    }
-
     private static void shortcut(Minecraft minecraft, long time) {
-        if (liveView == null || minecraft.screen != null || minecraft.getOverlay() != null
-                || minecraft.level == null || minecraft.player == null || minecraft.player.isSpectator()
+        HubView liveView = ClientHubSession.liveView();
+        if (liveView == null
+                || minecraft.screen != null
+                || minecraft.getOverlay() != null
+                || minecraft.level == null
+                || minecraft.player == null
+                || minecraft.player.isSpectator()
                 || !WzClient.available()) return;
-        WzPage page = ((WzHubAccess) (Object) liveView).wenzhouPage();
+        WzPage page = liveView.externalPage(WzPage.class);
+        if (page == null) return;
         if (!page.prepareWorldBlockFromGame()) {
-            minecraft.player.displayClientMessage(net.minecraft.network.chat.Component.literal("问舟方块引用当前不可用。"), true);
+            minecraft.player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal("问舟方块引用当前不可用。"), true);
             return;
         }
-        current = new WzWorldPicker(minecraft, null, page, liveView.dark(), liveView.reducedMotion());
+        current =
+                new WzWorldPicker(minecraft, null, page, liveView.dark(), liveView.reducedMotion());
         current.startAiming(time);
         discard(minecraft.options.keyUse);
     }
@@ -121,7 +141,11 @@ public final class WzWorldPicker {
     }
 
     static float closingOpacity(WzPage page, long time) {
-        return closing(page) ? current.reduced ? 0 : 1 - SelectionMotion.smooth((time - current.at) / (double) EXIT) : 1;
+        return closing(page)
+                ? current.reduced
+                        ? 0
+                        : 1 - SelectionMotion.smooth((time - current.at) / (double) EXIT)
+                : 1;
     }
 
     public static boolean hubKey(WzPage page, int key, int scan) {
@@ -133,8 +157,9 @@ public final class WzWorldPicker {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void mouseShortcut(ScreenEvent.MouseButtonPressed.Pre event) {
-        if (!(event.getScreen() instanceof WzHubAccess access)) return;
-        WzPage page = access.wenzhouPage();
+        if (!(event.getScreen() instanceof HubScreen screen)) return;
+        WzPage page = screen.view().externalPage(WzPage.class);
+        if (page == null) return;
         if (closing(page)) {
             event.setCanceled(true);
             return;
@@ -150,7 +175,8 @@ public final class WzWorldPicker {
         var picker = current;
         current = null;
         if (!picker.valid(Minecraft.getInstance())
-                || !page.model.granted || !page.model.consented || !page.model.blockReferences) {
+                || !page.model.granted
+                || !page.model.blockReferences) {
             page.closePanel();
             return;
         }
@@ -160,12 +186,18 @@ public final class WzWorldPicker {
     }
 
     private boolean valid(Minecraft minecraft) {
-        return minecraft.level == level && minecraft.player == player && minecraft.getConnection() == connection
-                && page.model.epoch() == epoch && player.isAlive() && !player.isSpectator();
+        return minecraft.level == level
+                && minecraft.player == player
+                && minecraft.getConnection() == connection
+                && page.model.epoch() == epoch
+                && player.isAlive()
+                && !player.isSpectator();
     }
 
     private boolean inWorld() {
-        return phase != Phase.CLOSING && phase != Phase.RESTORING && !suspended
+        return phase != Phase.CLOSING
+                && phase != Phase.RESTORING
+                && !suspended
                 && worldScreenReady(Minecraft.getInstance());
     }
 
@@ -192,7 +224,6 @@ public final class WzWorldPicker {
     @SubscribeEvent
     public static void logout(ClientPlayerNetworkEvent.LoggingOut event) {
         abandon();
-        liveView = null;
     }
 
     @SubscribeEvent
@@ -201,7 +232,9 @@ public final class WzWorldPicker {
         Minecraft minecraft = Minecraft.getInstance();
         long now = System.nanoTime();
         boolean shortcut = KEY.consumeClick();
-        while (KEY.consumeClick()) { /* Coalesce repeated clicks to one mode change. */ }
+        while (KEY.consumeClick()) {
+            /* Coalesce repeated clicks to one mode change. */
+        }
         var picker = current;
         if (picker == null) {
             if (shortcut) shortcut(minecraft, now);
@@ -215,7 +248,8 @@ public final class WzWorldPicker {
             if (worldScreenReady(minecraft)) {
                 picker.startAiming(now);
                 discard(minecraft.options.keyUse);
-            } else if (minecraft.screen == picker.origin && minecraft.getOverlay() == null
+            } else if (minecraft.screen == picker.origin
+                    && minecraft.getOverlay() == null
                     && (picker.reduced || now - picker.at >= EXIT)) {
                 picker.startAiming(now);
                 discard(minecraft.options.keyUse);
@@ -226,7 +260,8 @@ public final class WzWorldPicker {
         if (picker.phase == Phase.RESTORING) {
             // A transient screen may supersede a delayed Hub open. Keep the draft available
             // on the next normal Hub open and retry the automatic return once.
-            if (!picker.retriedReturn && now - picker.at > 5_000_000_000L
+            if (!picker.retriedReturn
+                    && now - picker.at > 5_000_000_000L
                     && worldScreenReady(minecraft)) {
                 picker.retriedReturn = true;
                 ClientBootstrap.open();
@@ -275,7 +310,9 @@ public final class WzWorldPicker {
     }
 
     private static void discard(KeyMapping key) {
-        while (key.consumeClick()) { /* Clear queued actions before vanilla processes them. */ }
+        while (key.consumeClick()) {
+            /* Clear queued actions before vanilla processes them. */
+        }
         key.setDown(false);
     }
 
@@ -283,8 +320,10 @@ public final class WzWorldPicker {
     public static void opening(ScreenEvent.Opening event) {
         if (current == null || !current.inWorld()) return;
         Minecraft minecraft = Minecraft.getInstance();
-        if (event.getNewScreen() instanceof PauseScreen && minecraft.isWindowActive()
-                && InputConstants.isKeyDown(minecraft.getWindow().getWindow(), GLFW.GLFW_KEY_ESCAPE)) {
+        if (event.getNewScreen() instanceof PauseScreen
+                && minecraft.isWindowActive()
+                && InputConstants.isKeyDown(
+                        minecraft.getWindow().getWindow(), GLFW.GLFW_KEY_ESCAPE)) {
             event.setCanceled(true);
             current.finish(null, null);
         } else if (event.getNewScreen() instanceof HubScreen) {
@@ -299,7 +338,8 @@ public final class WzWorldPicker {
         var picker = current;
         if (picker == null || !picker.inWorld() || event.getAction() != GLFW.GLFW_PRESS) return;
         if (event.getKey() == GLFW.GLFW_KEY_ESCAPE
-                || !KEY.isUnbound() && KEY.matches(event.getKey(), event.getScanCode())) picker.finish(null, null);
+                || !KEY.isUnbound() && KEY.matches(event.getKey(), event.getScanCode()))
+            picker.finish(null, null);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -318,8 +358,11 @@ public final class WzWorldPicker {
         int button = event.getButton();
         var keys = Minecraft.getInstance().options;
         boolean choose = button == GLFW.GLFW_MOUSE_BUTTON_RIGHT || keys.keyUse.matchesMouse(button);
-        if (choose || button == GLFW.GLFW_MOUSE_BUTTON_LEFT || button == GLFW.GLFW_MOUSE_BUTTON_MIDDLE
-                || keys.keyAttack.matchesMouse(button) || keys.keyPickItem.matchesMouse(button)) {
+        if (choose
+                || button == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                || button == GLFW.GLFW_MOUSE_BUTTON_MIDDLE
+                || keys.keyAttack.matchesMouse(button)
+                || keys.keyPickItem.matchesMouse(button)) {
             event.setCanceled(true);
             if (choose && event.getAction() == GLFW.GLFW_PRESS) picker.pick();
         }
@@ -336,14 +379,27 @@ public final class WzWorldPicker {
         motion.observe(target, seconds(at));
         JsonObject body = new JsonObject();
         body.addProperty("pos", Long.toString(target.pos.asLong()));
-        WzClient.request("block.capture", body).completeOnTimeout(null, 6, TimeUnit.SECONDS)
-                .whenComplete((reply, failed) -> Minecraft.getInstance().execute(() -> {
-                    if (current != this || phase != Phase.CHECKING) return;
-                    var ref = WzBlockReference.fromResponse(reply);
-                    String message = ref != null ? null : reply == null || !reply.has("error")
-                            ? "服务器暂未确认方块，可重新选择。" : reply.get("error").getAsString();
-                    finish(ref, message);
-                }));
+        WzClient.request("block.capture", body)
+                .completeOnTimeout(null, 6, TimeUnit.SECONDS)
+                .whenComplete(
+                        (reply, failed) ->
+                                Minecraft.getInstance()
+                                        .execute(
+                                                () -> {
+                                                    if (current != this || phase != Phase.CHECKING)
+                                                        return;
+                                                    var ref = WzBlockReference.fromResponse(reply);
+                                                    String message =
+                                                            ref != null
+                                                                    ? null
+                                                                    : reply == null
+                                                                                    || !reply.has(
+                                                                                            "error")
+                                                                            ? "服务器暂未确认方块，可重新选择。"
+                                                                            : reply.get("error")
+                                                                                    .getAsString();
+                                                    finish(ref, message);
+                                                }));
     }
 
     @SubscribeEvent
@@ -377,19 +433,33 @@ public final class WzWorldPicker {
         float fade = picker.fade(now);
         double time = picker.reduced ? 0 : seconds(now - picker.entered);
         if (outgoing != null && !picker.reduced) {
-            Outline.drawCompatible(event, outgoing.pos, outgoing.path, theme, motion.oldFill(),
-                    fade * motion.oldOpacity(seconds(now)), time);
+            Outline.drawCompatible(
+                    event,
+                    outgoing.pos,
+                    outgoing.path,
+                    theme,
+                    motion.oldFill(),
+                    fade * motion.oldOpacity(seconds(now)),
+                    time);
         }
         if (target != null) {
-            Outline.drawCompatible(event, target.pos, target.path, theme,
-                    picker.reduced ? 1 : motion.edge(), fade, time);
+            Outline.drawCompatible(
+                    event,
+                    target.pos,
+                    target.path,
+                    theme,
+                    picker.reduced ? 1 : motion.edge(),
+                    fade,
+                    time);
             event.setCanceled(true);
         }
     }
 
     private static BlockHitResult hit() {
         return Minecraft.getInstance().hitResult instanceof BlockHitResult hit
-                && hit.getType() == HitResult.Type.BLOCK ? hit : null;
+                        && hit.getType() == HitResult.Type.BLOCK
+                ? hit
+                : null;
     }
 
     private Target target(BlockHitResult hit) {
@@ -403,7 +473,11 @@ public final class WzWorldPicker {
         var shape = state.getShape(level, pos, CollisionContext.of(player));
         if (shape.isEmpty()) return null;
         var anchor = hit.getLocation().subtract(pos.getX(), pos.getY(), pos.getZ());
-        return new Target(pos.immutable(), state, OutlinePath.capture(shape, anchor), state.getBlock().getName().getString());
+        return new Target(
+                pos.immutable(),
+                state,
+                OutlinePath.capture(shape, anchor),
+                state.getBlock().getName().getString());
     }
 
     private void observe(long now) {
@@ -411,13 +485,18 @@ public final class WzWorldPicker {
         Target next = phase == Phase.AIMING ? target(hit()) : before;
         motion.observe(next, seconds(now));
         if (next == null || next == before) return;
-        String previous = oldTitle != null && now - titleAt < 75_000_000L ? oldTitle : before == null ? null : before.name;
+        String previous =
+                oldTitle != null && now - titleAt < 75_000_000L
+                        ? oldTitle
+                        : before == null ? null : before.name;
         oldTitle = motion.card() > 0 && !next.name.equals(previous) ? previous : null;
         titleAt = now;
     }
 
     private float fade(long now) {
-        return phase == Phase.LEAVING ? 1 - SelectionMotion.smooth((now - at) / (double) RECEIPT) : 1;
+        return phase == Phase.LEAVING
+                ? 1 - SelectionMotion.smooth((now - at) / (double) RECEIPT)
+                : 1;
     }
 
     @SubscribeEvent
@@ -425,7 +504,9 @@ public final class WzWorldPicker {
         var picker = current;
         var mc = Minecraft.getInstance();
         if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS
-                || picker == null || !picker.inWorld() || mc.options.hideGui) return;
+                || picker == null
+                || !picker.inWorld()
+                || mc.options.hideGui) return;
         long now = System.nanoTime();
         picker.observe(now);
         if (!Outline.customAvailable()) return;
@@ -436,10 +517,23 @@ public final class WzWorldPicker {
         Target outgoing = motion.outgoing();
         Target target = motion.current();
         if (outgoing != null && !picker.reduced)
-            Outline.draw(event, outgoing.pos, outgoing.path, theme, motion.oldFill(),
-                    fade * motion.oldOpacity(seconds(now)), time);
+            Outline.draw(
+                    event,
+                    outgoing.pos,
+                    outgoing.path,
+                    theme,
+                    motion.oldFill(),
+                    fade * motion.oldOpacity(seconds(now)),
+                    time);
         if (target != null)
-            Outline.draw(event, target.pos, target.path, theme, picker.reduced ? 1 : motion.edge(), fade, time);
+            Outline.draw(
+                    event,
+                    target.pos,
+                    target.path,
+                    theme,
+                    picker.reduced ? 1 : motion.edge(),
+                    fade,
+                    time);
     }
 
     @SubscribeEvent
@@ -455,22 +549,44 @@ public final class WzWorldPicker {
         long now = System.nanoTime();
         var motion = picker.motion;
         var target = motion.current();
-        float entry = picker.reduced ? 1 : SelectionMotion.smooth((now - picker.entered) / 240_000_000d);
+        float entry =
+                picker.reduced ? 1 : SelectionMotion.smooth((now - picker.entered) / 240_000_000d);
         float opacity = entry * picker.fade(now);
         float card = picker.reduced && target != null ? 1 : motion.card();
         gui.pose().pushPose();
-        gui.pose().scale(layout.guiX(framebufferWidth, window.getGuiScaledWidth()),
-                layout.guiY(framebufferHeight, window.getGuiScaledHeight()), 1);
+        gui.pose()
+                .scale(
+                        layout.guiX(framebufferWidth, window.getGuiScaledWidth()),
+                        layout.guiY(framebufferHeight, window.getGuiScaledHeight()),
+                        1);
         try {
-            Atmosphere.render(gui, layout.width(), layout.height(), layout.connectorX(), layout.connectorY(),
+            Atmosphere.render(
+                    gui,
+                    layout.width(),
+                    layout.height(),
+                    layout.connectorX(),
+                    layout.connectorY(),
                     picker.reduced && target != null ? 1 : motion.wire(),
-                    picker.reduced && target != null ? 1 : motion.edge(), picker.dark ? 1 : 0, opacity,
+                    picker.reduced && target != null ? 1 : motion.edge(),
+                    picker.dark ? 1 : 0,
+                    opacity,
                     picker.reduced ? 0 : seconds(now - picker.entered));
             if (target != null && card > 0) {
-                float swap = picker.reduced || picker.oldTitle == null ? 1
-                        : SelectionMotion.smooth((now - picker.titleAt) / 150_000_000d);
-                Panel.drawLayers(gui, target.name, picker.oldTitle, swap, picker.phase == Phase.CHECKING,
-                        picker.dark, layout.cardX(), layout.cardY(), opacity * card, card);
+                float swap =
+                        picker.reduced || picker.oldTitle == null
+                                ? 1
+                                : SelectionMotion.smooth((now - picker.titleAt) / 150_000_000d);
+                Panel.drawLayers(
+                        gui,
+                        target.name,
+                        picker.oldTitle,
+                        swap,
+                        picker.phase == Phase.CHECKING,
+                        picker.dark,
+                        layout.cardX(),
+                        layout.cardY(),
+                        opacity * card,
+                        card);
                 if (swap >= 1) picker.oldTitle = null;
             }
         } finally {
@@ -491,12 +607,19 @@ public final class WzWorldPicker {
         return nanos / 1_000_000_000d;
     }
 
-    @Mod.EventBusSubscriber(modid = "wenzhouai", value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.MOD)
+    @Mod.EventBusSubscriber(
+            modid = "wenzhouai",
+            value = Dist.CLIENT,
+            bus = Mod.EventBusSubscriber.Bus.MOD)
     public static final class Registration {
         @SubscribeEvent
-        public static void keys(RegisterKeyMappingsEvent event) { event.register(KEY); }
+        public static void keys(RegisterKeyMappingsEvent event) {
+            event.register(KEY);
+        }
 
         @SubscribeEvent
-        public static void shaders(RegisterShadersEvent event) { Outline.registerShader(event); }
+        public static void shaders(RegisterShadersEvent event) {
+            Outline.registerShader(event);
+        }
     }
 }

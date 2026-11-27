@@ -12,12 +12,11 @@ export default function Workspace({page, theme, toast, setUnsaved, gameConnected
       ? <ServiceSettings serviceRevision={serviceRevision} toast={toast} setUnsaved={setUnsaved} gameConnected={gameConnected}/>
       : page === 'wenzhou-knowledge' ? <Knowledge revision={knowledgeRevision}/>
       : <Records key={page} recordsRevision={historyRevision === undefined ? undefined : historyRevision + '/' + playersRevision}
-          presenceRevision={presenceRevision} people={page === 'wenzhou-players'} toast={toast} gameConnected={gameConnected}/>}
+          presenceRevision={presenceRevision} terraRevision={serviceRevision} people={page === 'wenzhou-players'} toast={toast} gameConnected={gameConnected}/>}
   </div>;
 }
 
 function ServiceSettings({toast, setUnsaved, gameConnected, serviceRevision}) {
-  const [tab,setTab] = useState('key');
   const [status, setStatus] = useState(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
@@ -60,12 +59,10 @@ function ServiceSettings({toast, setUnsaved, gameConnected, serviceRevision}) {
   }, [revision, gameConnected, serviceRevision]);
 
   return <>
-    <div className="view-bar"><div className="view-tabs" role="tablist" aria-label="服务设置分类">{[['key','模型服务'],['terms','用户协议']].map(([id,label])=>
-      <button key={id} role="tab" aria-selected={tab===id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</div></div>
-    {!gameConnected && status && <p className="quiet-note" role="status">游戏服未连接。使用限额仍可修改。密钥、思考等级与协议设置在游戏服连接后可修改。</p>}
+    {!gameConnected && status && <p className="quiet-note" role="status">游戏服未连接。仍可调整 Terra 设置及 DeepSeek 限额。DeepSeek 密钥与思考等级需连接游戏服。</p>}
     <ErrorNotice error={error} retry={() => setRevision(value => value + 1)}/>
     {status
-      ? <Service tab={tab} {...status} update={update} toast={toast} setUnsaved={setUnsaved} gameConnected={gameConnected}/>
+      ? <Service {...status} serviceRevision={serviceRevision} update={update} toast={toast} setUnsaved={setUnsaved} gameConnected={gameConnected}/>
       : !error && <span className="inline-loading" role="status">正在读取服务设置…</span>}
   </>;
 }

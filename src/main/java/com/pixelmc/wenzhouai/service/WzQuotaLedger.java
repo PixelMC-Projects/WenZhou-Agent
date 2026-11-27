@@ -2,6 +2,7 @@ package com.pixelmc.wenzhouai.service;
 
 import static com.pixelmc.wenzhouai.service.WzData.number;
 import static com.pixelmc.wenzhouai.service.WzData.read;
+import static com.pixelmc.wenzhouai.service.WzData.string;
 import static com.pixelmc.wenzhouai.service.WzData.write;
 
 import com.google.gson.JsonObject;
@@ -48,7 +49,7 @@ final class WzQuotaLedger {
     }
 
     JsonObject record(UUID player, long admittedAt, JsonObject receipt) {
-        if (!receipt.has("nanoYuan")) return null;
+        if (WzThreadUsage.CHATGPT_PLAN.equals(string(receipt, "billing")) || !receipt.has("nanoYuan")) return null;
         String id = UUID.fromString(receipt.get("id").getAsString()).toString();
         JsonObject charge = new JsonObject();
         charge.addProperty("requestAt", admittedAt);

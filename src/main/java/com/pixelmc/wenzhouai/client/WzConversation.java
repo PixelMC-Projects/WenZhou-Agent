@@ -27,7 +27,7 @@ final class WzConversation {
         JsonObject reply, itemChoice;
         String choiceId = "";
         int selectedOption = -1;
-        String topic = "", topicToken = "", error = "";
+        String topic = "", topicToken = "", error = "", modelSelection = "";
         boolean usageMissing;
         boolean persisted, stopping, stopped;
         long answered;
@@ -46,13 +46,17 @@ final class WzConversation {
                     if (stopping || stopped || reply != null) return;
                     if (event.has("item") && event.get("item").isJsonObject()) {
                         var stack = HubWenzhouAnswer.stack(event.getAsJsonObject("item"));
-                        if (!stack.isEmpty()) text = net.minecraft.ChatFormatting.stripFormatting(stack.getHoverName().getString());
+                        if (!stack.isEmpty())
+                            text =
+                                    net.minecraft.ChatFormatting.stripFormatting(
+                                            stack.getHoverName().getString());
                     }
                     stream.append(text);
                 }
                 case "answer.reset" -> stream.reset();
                 case "stage.report" -> {
-                    if (!text.isBlank() && activity.stream().noneMatch(row -> row.id().equals(id))) {
+                    if (!text.isBlank()
+                            && activity.stream().noneMatch(row -> row.id().equals(id))) {
                         activity.add(new Activity(type, id, "", text, "", System.nanoTime()));
                         activityRevision++;
                     }
@@ -66,7 +70,8 @@ final class WzConversation {
                             return;
                         }
                     }
-                    if (!id.isEmpty() || activity.isEmpty()
+                    if (!id.isEmpty()
+                            || activity.isEmpty()
                             || !activity.get(activity.size() - 1).type().equals(type)) {
                         activity.add(new Activity(type, id, "", text, "", System.nanoTime()));
                         activityRevision++;
@@ -75,7 +80,15 @@ final class WzConversation {
                 case "tool.start", "tool.finish" -> {
                     activityRevision++;
                     String icon = str(event, "icon");
-                    if (java.util.Set.of("event-output","worldgen","food-book","store-search","reward","trade","structure-loot").contains(icon)) text = registryTargetLabel(text);
+                    if (java.util.Set.of(
+                                    "event-output",
+                                    "worldgen",
+                                    "food-book",
+                                    "store-search",
+                                    "reward",
+                                    "trade",
+                                    "structure-loot")
+                            .contains(icon)) text = registryTargetLabel(text);
                     for (int i = 0; !id.isEmpty() && i < activity.size(); i++) {
                         Activity row = activity.get(i);
                         if (!id.equals(row.id())) continue;
@@ -134,18 +147,191 @@ final class WzConversation {
         }
     }
 
+    java.util.function.BiConsumer<String, String> openLink = (kind, id) -> {};
+    final java.util.LinkedHashMap<String, String> unread = new java.util.LinkedHashMap<>();
+    private final java.util.Set<String> acknowledging = new java.util.HashSet<>();
+    private long unreadRevision, reminderRevision, retryReadAt;
+    boolean socialEnabled, completionReminder = true, unreadReminder = true, savingReminder;
+
+    String resumeThread() {
+        if (pending != null) return pendingThread;
+        return unread.isEmpty() ? null : unread.keySet().iterator().next();
+    }
+
+    void resumeFresh() {
+        if (pending != null && pendingThread == null) {
+            pendingSelection = selectionEpoch;
+            turns.add(pending);
+        }
+    }
+
+    void markVisibleRead() {
+        String thread = selected, token = unread.get(thread);
+        if (token == null
+                || loadingHistory
+                || turns.isEmpty()
+                || turns.stream().noneMatch(turn -> token.equals(turn.choiceId))
+                || System.nanoTime() < retryReadAt
+                || !acknowledging.add(thread)) return;
+        var body = id("id", thread);
+        body.addProperty("turn", token);
+        request(
+                "read",
+                body,
+                result -> {
+                    acknowledging.remove(thread);
+                    if (flag(result, "ok")) {
+                        unread.remove(thread, token);
+                        unreadRevision++;
+                    } else retryReadAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
+                });
+    }
+
+    private void preferences(JsonObject value) {
+        completionReminder = value == null || !value.has("completion") || flag(value, "completion");
+        unreadReminder = value == null || !value.has("unread") || flag(value, "unread");
+    }
+
+    void toggleReminder(boolean completion, Consumer<String> errorNotice) {
+        if (savingReminder) return;
+        var body = id("kind", completion ? "completion" : "unread");
+        body.addProperty("enabled", !(completion ? completionReminder : unreadReminder));
+        savingReminder = true;
+        reminderRevision++;
+        request(
+                "reminder",
+                body,
+                result -> {
+                    savingReminder = false;
+                    reminderRevision++;
+                    if (result.has("error")) errorNotice.accept(str(result, "error"));
+                    else preferences(result);
+                });
+    }
+
+    private void completed(JsonObject result, Turn turn) {
+        String thread = str(result, "id"), token = str(result, "unreadTurn");
+        if (thread.isEmpty()
+                || token.isEmpty()
+                || !token.equals(str(result, "requestId"))
+                || flag(result, "removed")
+                || removedThreads.contains(thread)) return;
+        var previous = new java.util.LinkedHashMap<>(unread);
+        previous.remove(thread);
+        unread.clear();
+        unread.put(thread, token);
+        unread.putAll(previous);
+        unreadRevision++;
+        var mc = Minecraft.getInstance();
+        if (completionReminder
+                && obj(result, "reply") != null
+                && !result.has("itemChoice")
+                && !result.has("error")
+                && !flag(result, "stopped")
+                && mc.player != null
+                && !(mc.screen instanceof com.pixelmc.hub.client.HubScreen)) {
+            String title = str(result, "title");
+            mc.player.displayClientMessage(
+                    com.pixelmc.wenzhouai.network.WzChatLinks.completed(
+                            title.isBlank() ? turn.question : title, thread),
+                    false);
+        }
+    }
+
     final List<Turn> turns = new ArrayList<>();
     JsonArray conversations = new JsonArray();
-    JsonObject policy;
     WzQuota quota = WzQuota.OFF;
-    private long nextQuotaCheck;
+    private WzQuota terraQuota = WzQuota.OFF;
+    private boolean projectBillingBlocked;
+    private long nextQuotaCheck, terraQuotaRevision;
+    private WzModelPicker.State modelPicker;
+    private long modelRevision;
+    private boolean modelWriting, modelRefreshing;
+
+    WzModelPicker.State modelPicker() {
+        return modelPicker;
+    }
+
+    boolean modelUpdating() {
+        return modelWriting || modelRefreshing;
+    }
+
+    boolean chatGptSelected() {
+        return modelPicker != null && modelPicker.chatGpt();
+    }
+
+    boolean quotaExhausted() {
+        return quotaExhausted(null);
+    }
+
+    boolean terraSelected() {
+        return modelPicker != null && modelPicker.terra();
+    }
+
+    WzQuota activeQuota(Turn turn) {
+        String id =
+                turn == null || turn.modelSelection.isEmpty()
+                        ? modelPicker == null ? WzModelPicker.DEEPSEEK : modelPicker.selected().id()
+                        : turn.modelSelection.split("/", 2)[0];
+        return switch (id) {
+            case WzModelPicker.TERRA -> projectBillingBlocked ? quota : terraQuota;
+            case WzModelPicker.DEEPSEEK -> quota;
+            default -> WzQuota.OFF;
+        };
+    }
+
+    boolean quotaExhausted(Turn turn) {
+        return activeQuota(turn).exhausted();
+    }
+
+    private void applyTerraQuota(JsonObject quota) {
+        WzQuota updated = WzQuota.terra(quota);
+        if (updated.resetAt() != terraQuota.resetAt()) nextQuotaCheck = 0;
+        terraQuota = updated;
+        terraQuotaRevision++;
+    }
+
+    private void applyModelPicker(JsonObject data, long quotaRead) {
+        modelPicker = WzModelPicker.State.from(data);
+        if (modelPicker == null || !modelPicker.accepts(WzModelPicker.TERRA, null))
+            applyTerraQuota(null);
+        else if (quotaRead == terraQuotaRevision) applyTerraQuota(obj(data, "terraQuota"));
+    }
+
+    void setModel(String id, String effort, Consumer<String> notice) {
+        WzModelPicker.State state = modelPicker;
+        if (busy() || !granted || state == null || !state.accepts(id, effort)) return;
+        if (state.selected().id().equals(id) && (effort == null || effort.equals(state.effort())))
+            return;
+        JsonObject body = id("model", id);
+        if (effort != null) body.addProperty("effort", effort);
+        modelWriting = true;
+        long revision = ++modelRevision, quotaRead = terraQuotaRevision;
+        request(
+                "model.set",
+                body,
+                result -> {
+                    modelWriting = false;
+                    nextStatus = 0;
+                    statusDirty = true;
+                    JsonObject confirmed = obj(result, "modelPicker");
+                    String message = str(result, "error");
+                    if (!message.isEmpty() || confirmed == null) {
+                        modelRefreshing = true;
+                        notice.accept(message.isEmpty() ? "模型设置未确认，正在重新读取。" : message);
+                        return;
+                    }
+                    if (revision == modelRevision) applyModelPicker(confirmed, quotaRead);
+                });
+    }
 
     void applyQuota(JsonObject envelope) {
         WzQuota updated = WzQuota.from(obj(envelope, "quota"));
         if (updated.resetAt() != quota.resetAt()) nextQuotaCheck = 0;
         quota = updated;
     }
-    String selected, error = "", version = "";
+
+    String selected, error = "";
     String listError = "", historyError = "";
     Turn pending;
     private String pendingThread, pendingRequest;
@@ -155,14 +341,7 @@ final class WzConversation {
     private Turn unresolvedFailure;
     private final java.util.Set<String> removedThreads = new java.util.HashSet<>();
     private long pendingSelection;
-    boolean granted,
-            consented,
-            showProtocol,
-            research,
-            loadingHistory,
-            loadingList,
-            checking,
-            writing;
+    boolean granted, loadingHistory, loadingList, checking, writing;
     boolean blockReferences;
     // A missing field is an old server or a pending login. Only an explicit false opens the guide.
     private boolean introSeen = true, introShownHere, introWritePending;
@@ -182,17 +361,29 @@ final class WzConversation {
     private void acknowledgeIntro() {
         introWritePending = true;
         introWriteAttempts++;
-        request("introSeen", new JsonObject(), result -> {
-            introWritePending = false;
-            if (flag(result, "introSeen")) introSeen = true;
-            else introRetryAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        });
+        request(
+                "introSeen",
+                new JsonObject(),
+                result -> {
+                    introWritePending = false;
+                    if (flag(result, "introSeen")) introSeen = true;
+                    else introRetryAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                });
     }
 
     String entryNotice = "";
     private Object connection;
-    private long nextStatus, epoch, selectionEpoch;
-    private boolean statusDirty = true, loadingPolicy, listDirty;
+    private long entryRequest, nextStatus, nextChannelCheck, epoch, selectionEpoch;
+    private int statusFailures;
+    private boolean statusDirty = true, listDirty;
+    boolean entryConfirmed;
+
+    boolean prefetchDue() {
+        return statusDirty
+                && !checking
+                && statusFailures < 3
+                && System.nanoTime() >= Math.max(nextStatus, nextChannelCheck);
+    }
 
     // Network replies are delivered on the client thread by WzClient or marshalled here.
     void invalidateStatus() {
@@ -211,63 +402,92 @@ final class WzConversation {
             invalidateAccess();
         }
         if (!WzClient.available()) {
-            if (granted || checking) invalidateAccess();
+            if (granted || checking || entryConfirmed) invalidateAccess();
+            nextChannelCheck = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
             return;
         }
         long now = System.nanoTime();
-        if (introShownHere && !introSeen && !introWritePending && introWriteAttempts < 3
-                && entry() && now >= introRetryAt) acknowledgeIntro();
-        if (granted && quota.enabled() && quota.resetAt() > 0
-                && System.currentTimeMillis() >= quota.resetAt() && now >= nextQuotaCheck) {
+        if (introShownHere
+                && !introSeen
+                && !introWritePending
+                && introWriteAttempts < 3
+                && entry()
+                && now >= introRetryAt) acknowledgeIntro();
+        long wallTime = System.currentTimeMillis();
+        boolean deepSeekReset = quota.resetAt() > 0 && wallTime >= quota.resetAt();
+        boolean terraReset = terraQuota.resetAt() > 0 && wallTime >= terraQuota.resetAt();
+        if (granted && (deepSeekReset || terraReset) && now >= nextQuotaCheck) {
             statusDirty = true;
             nextQuotaCheck = now + 5_000_000_000L;
         }
         if (checking || !statusDirty || now < nextStatus) return;
         statusDirty = false;
         checking = true;
+        long modelRead = modelRevision,
+                unreadRead = unreadRevision,
+                reminderRead = reminderRevision;
+        long quotaRead = terraQuotaRevision;
         WzClient.onEvent(this::onEvent);
+        var capabilities = new JsonObject();
+        capabilities.addProperty("shareLinks", true);
+        entryRequest++;
+        if (!granted && entryNotice.isEmpty())
+            capabilities.addProperty("entryRequest", entryRequest);
         request(
                 "status",
-                new JsonObject(),
+                capabilities,
                 result -> {
                     checking = false;
+                    entryConfirmed = false;
                     if (!str(result, "error").isEmpty()) {
+                        statusFailures++;
                         statusDirty = true;
                         nextStatus = System.nanoTime() + 3_000_000_000L;
                         return;
                     }
-                    boolean hadAccess = granted && (!showProtocol || consented);
+                    statusFailures = 0;
+                    socialEnabled = number(result, "shareVersion", 0) >= 1;
+                    boolean hadGrant = granted;
                     entryNotice = str(result, "entryNotice");
                     granted = flag(result, "granted");
                     introSeen = !granted || !result.has("introSeen") || flag(result, "introSeen");
                     blockReferences = granted && flag(result, "blockReferences");
+                    if (granted && !savingReminder && reminderRead == reminderRevision)
+                        preferences(obj(result, "reminders"));
+                    if (granted && unreadRead == unreadRevision && result.has("unread")) {
+                        unread.clear();
+                        for (var element : array(result, "unread")) {
+                            var row = element.getAsJsonObject();
+                            unread.put(str(row, "id"), str(row, "unreadTurn"));
+                        }
+                    }
+                    projectBillingBlocked = granted && flag(result, "projectBillingBlocked");
                     if (granted) applyQuota(result);
                     else quota = WzQuota.OFF;
-                    showProtocol = flag(result, "showProtocol");
-                    consented = flag(result, "consented");
-                    research = flag(result, "research");
-                    String nextVersion = version(result);
-                    if (!version.equals(nextVersion)) {
-                        version = nextVersion;
-                        policy = null;
-                        error = "";
+                    if (hadGrant && !granted) {
+                        forgetConversations();
+                    } else if (!modelWriting && modelRead == modelRevision) {
+                        applyModelPicker(obj(result, "modelPicker"), quotaRead);
+                        modelRefreshing = false;
                     }
-                    if (!granted || hadAccess && showProtocol && !consented) forgetConversations();
                 });
     }
 
     void invalidateAccess() {
+        entryRequest++;
+        statusFailures = 0;
+        entryConfirmed = false;
         introSeen = true;
         introShownHere = introWritePending = blockReferences = false;
         introWriteAttempts = 0;
         introRetryAt = 0;
+        socialEnabled = false;
         entryNotice = "";
-        granted = consented = showProtocol = research = checking = writing = false;
-        nextStatus = nextQuotaCheck = 0;
+        granted = checking = writing = false;
+        nextStatus = nextChannelCheck = nextQuotaCheck = 0;
         quota = WzQuota.OFF;
+        projectBillingBlocked = false;
         statusDirty = true;
-        version = "";
-        policy = null;
         error = "";
         forgetConversations();
     }
@@ -283,9 +503,19 @@ final class WzConversation {
         failedThread = null;
         unresolvedFailure = null;
         removedThreads.clear();
+        unread.clear();
+        acknowledging.clear();
+        unreadRevision++;
+        reminderRevision++;
+        savingReminder = false;
+        preferences(null);
         listDirty = false;
+        modelPicker = null;
+        applyTerraQuota(null);
+        modelWriting = modelRefreshing = false;
+        modelRevision++;
         listError = historyError = "";
-        loadingHistory = loadingList = writing = checking = loadingPolicy = false;
+        loadingHistory = loadingList = writing = checking = false;
         turns.clear();
         conversations = new JsonArray();
     }
@@ -294,12 +524,32 @@ final class WzConversation {
         Minecraft.getInstance()
                 .execute(
                         () -> {
+                            if (connection != Minecraft.getInstance().getConnection()) return;
                             switch (str(event, "type")) {
+                                case "link.shared", "link.answer" ->
+                                        openLink.accept(str(event, "type"), str(event, "id"));
                                 case "revoked" -> invalidateAccess();
+                                case "status.entry" -> {
+                                    if (checking
+                                            && connection == Minecraft.getInstance().getConnection()
+                                            && number(event, "entryRequest", -1) == entryRequest)
+                                        entryConfirmed = flag(event, "visible");
+                                }
                                 case "quota" -> {
                                     if (granted) applyQuota(event);
                                 }
+                                case "terra.quota" -> {
+                                    if (granted && event.has("terraQuota"))
+                                        applyTerraQuota(obj(event, "terraQuota"));
+                                }
                                 case "changed", "quota.changed" -> {
+                                    nextStatus = 0;
+                                    statusDirty = true;
+                                    refresh();
+                                }
+                                case "model.changed" -> {
+                                    modelRevision++;
+                                    modelRefreshing = modelPicker != null;
                                     nextStatus = 0;
                                     statusDirty = true;
                                     refresh();
@@ -358,53 +608,6 @@ final class WzConversation {
         }
     }
 
-    void loadPolicy() {
-        if (loadingPolicy) return;
-        loadingPolicy = true;
-        error = "";
-        request(
-                "policy",
-                new JsonObject(),
-                result -> {
-                    loadingPolicy = false;
-                    if (!failed(result)) policy = result;
-                });
-    }
-
-    void consent(boolean value) {
-        if (writing || version.isEmpty()) return;
-        writing = true;
-        JsonObject payload = id("version", version);
-        payload.addProperty("rulesAccepted", true);
-        payload.addProperty("privacyAccepted", true);
-        payload.addProperty("research", value);
-        request(
-                "consent",
-                payload,
-                result -> {
-                    writing = false;
-                    if (failed(result)) return;
-                    consented = flag(result, "consented");
-                    research = flag(result, "research");
-                    nextStatus = 0;
-                    statusDirty = true;
-                });
-    }
-
-    void research(boolean value) {
-        if (writing) return;
-        writing = true;
-        JsonObject payload = new JsonObject();
-        payload.addProperty("enabled", value);
-        request(
-                "research",
-                payload,
-                result -> {
-                    writing = false;
-                    if (!failed(result)) research = flag(result, "research");
-                });
-    }
-
     void list() {
         if (loadingList) {
             listDirty = true;
@@ -458,6 +661,8 @@ final class WzConversation {
 
     void markRemoved(String thread) {
         removedThreads.add(thread);
+        unread.remove(thread);
+        unreadRevision++;
         for (int index = conversations.size() - 1; index >= 0; index--) {
             JsonElement entry = conversations.get(index);
             if (entry.isJsonObject() && thread.equals(str(entry.getAsJsonObject(), "id")))
@@ -530,6 +735,7 @@ final class WzConversation {
         turn.error = turn.stopped ? "" : str(row, "failure");
         turn.topic = str(row, "topicPrompt");
         turn.topicToken = str(row, "topicToken");
+        turn.modelSelection = str(row, "modelSelection");
         turn.usageMissing |= flag(row, "usageMissing");
         array(row, "usageReceipts").forEach(turn::addReceipt);
         JsonArray events = array(row, "events");
@@ -548,13 +754,19 @@ final class WzConversation {
         var body = id("id", thread);
         body.addProperty("choiceId", turn.choiceId);
         writing = true;
-        request("dismissItemChoice", body, ack -> {
-            writing = false;
-            if (epoch != selectionEpoch || !thread.equals(selected)) return;
-            if (!flag(ack, "dismissed")) { errorNotice.accept(str(ack, "error")); return; }
-            turn.itemChoice = null;
-            openPicker.run();
-        });
+        request(
+                "dismissItemChoice",
+                body,
+                ack -> {
+                    writing = false;
+                    if (epoch != selectionEpoch || !thread.equals(selected)) return;
+                    if (!flag(ack, "dismissed")) {
+                        errorNotice.accept(str(ack, "error"));
+                        return;
+                    }
+                    turn.itemChoice = null;
+                    openPicker.run();
+                });
     }
 
     private static String registryTargetLabel(String label) {
@@ -564,10 +776,16 @@ final class WzConversation {
         if (id == null) return label;
         var item = net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(id);
         var block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getOptional(id);
-        String name = item.map(i -> net.minecraft.client.resources.language.I18n.get(i.getDescriptionId()))
-                .orElseGet(() -> block.map(b -> b.getName().getString()).orElse(""));
-        return name.isBlank() || name.startsWith("item.") || name.startsWith("block.") ? label
-                : label.substring(0, split + 3) + net.minecraft.ChatFormatting.stripFormatting(name);
+        String name =
+                item.map(
+                                i ->
+                                        net.minecraft.client.resources.language.I18n.get(
+                                                i.getDescriptionId()))
+                        .orElseGet(() -> block.map(b -> b.getName().getString()).orElse(""));
+        return name.isBlank() || name.startsWith("item.") || name.startsWith("block.")
+                ? label
+                : label.substring(0, split + 3)
+                        + net.minecraft.ChatFormatting.stripFormatting(name);
     }
 
     void retryHistory() {
@@ -575,18 +793,23 @@ final class WzConversation {
     }
 
     boolean entry() {
-        return granted && (showProtocol || consented);
+        return granted;
     }
 
     boolean busy() {
-        return pending != null || writing || loadingHistory || !historyError.isEmpty();
+        return pending != null
+                || writing
+                || loadingHistory
+                || modelUpdating()
+                || !historyError.isEmpty();
     }
 
     Turn visiblePending() {
         if (pending == null || !turns.contains(pending)) return null;
-        boolean sameThread = pendingThread == null
-                ? pendingSelection == selectionEpoch
-                : pendingThread.equals(selected);
+        boolean sameThread =
+                pendingThread == null
+                        ? pendingSelection == selectionEpoch
+                        : pendingThread.equals(selected);
         return sameThread ? pending : null;
     }
 
@@ -594,29 +817,41 @@ final class WzConversation {
         Turn turn = visiblePending();
         if (turn == null || turn.stopping) return;
         turn.stopping = true;
-        request("stop", id("requestId", pendingRequest), ack -> {
-            if (pending != turn) return;
-            String message = str(ack, "error");
-            if (!message.isEmpty() || !ack.has("stopping")) {
-                turn.stopping = false;
-                if (turn == visiblePending())
-                    notice.accept(message.isEmpty() ? "停止请求未确认，可以重试。" : message);
-            }
-            // Either stop was accepted, or the ask is already finishing. Its reply is authoritative.
-        });
+        request(
+                "stop",
+                id("requestId", pendingRequest),
+                ack -> {
+                    if (pending != turn) return;
+                    String message = str(ack, "error");
+                    if (!message.isEmpty() || !ack.has("stopping")) {
+                        turn.stopping = false;
+                        if (turn == visiblePending())
+                            notice.accept(message.isEmpty() ? "停止请求未确认，可以重试。" : message);
+                    }
+                    // Either stop was accepted, or the ask is already finishing. Its reply is
+                    // authoritative.
+                });
     }
 
     void ask(String question, boolean topicConfirmed, boolean startNew) {
-        if (busy() || quota.exhausted() || !granted || !consented || question.isBlank()) return;
-        error = "";
         Turn waiting = topicConfirmed && !turns.isEmpty() ? turns.get(turns.size() - 1) : null;
-        if (waiting != null && waiting.topicToken.isEmpty()) return;
+        if (busy()
+                || quotaExhausted(waiting)
+                || !granted
+                || question.isBlank()
+                || waiting != null && waiting.topicToken.isEmpty()) return;
+        error = "";
         List<Turn> origin = startNew ? new ArrayList<>(turns) : List.of();
         String previous = selected;
         if (waiting != null && !startNew) turns.remove(turns.size() - 1);
         if (startNew) choose(null);
         long current = selectionEpoch;
         Turn turn = new Turn(question);
+        if (modelPicker != null)
+            turn.modelSelection =
+                    waiting != null && !waiting.modelSelection.isEmpty()
+                            ? waiting.modelSelection
+                            : modelPicker.snapshot();
         if (waiting != null) {
             waiting.receipts.forEach(turn::addReceipt);
             turn.usageMissing = waiting.usageMissing;
@@ -626,6 +861,8 @@ final class WzConversation {
         if (waiting != null) pendingTopicToken = waiting.topicToken;
         JsonObject payload = id("question", question);
         payload.addProperty("requestId", pendingRequest);
+        if (!turn.modelSelection.isEmpty())
+            payload.addProperty("modelSelection", turn.modelSelection);
         if (selected != null) payload.addProperty("id", selected);
         if (waiting != null) {
             payload.addProperty("topicConfirmed", true);
@@ -638,6 +875,7 @@ final class WzConversation {
                     if (pending != turn) return;
                     if (obj(result, "quota") != null) applyQuota(result);
                     String original = pendingThread;
+                    completed(result, turn);
                     boolean visible = settleResult(turn, result);
                     if (original != null || !str(result, "id").isEmpty()) list();
                     if (!visible) return;
@@ -677,6 +915,8 @@ final class WzConversation {
                     for (JsonElement event : activity)
                         if (event.isJsonObject()) turn.apply(event.getAsJsonObject());
                     turn.topicToken = str(result, "topicToken");
+                    String usedModel = str(result, "modelSelection");
+                    if (!usedModel.isEmpty()) turn.modelSelection = usedModel;
                     if (!str(result, "topicPrompt").isEmpty())
                         turn.topic = str(result, "topicPrompt");
                 });
@@ -742,7 +982,7 @@ final class WzConversation {
         return true;
     }
 
-    private void request(String action, JsonObject payload, Consumer<JsonObject> then) {
+    void request(String action, JsonObject payload, Consumer<JsonObject> then) {
         long stamp = epoch;
         Object current = connection;
         CompletableFuture<JsonObject> request = WzClient.request(action, payload);
@@ -773,11 +1013,6 @@ final class WzConversation {
         return v != null && v.isJsonPrimitive() && v.getAsJsonPrimitive().isString()
                 ? v.getAsString()
                 : "";
-    }
-
-    private static String version(JsonObject value) {
-        JsonElement element = value.get("version");
-        return element != null && element.isJsonPrimitive() ? element.getAsString() : "";
     }
 
     static boolean flag(JsonObject value, String key) {

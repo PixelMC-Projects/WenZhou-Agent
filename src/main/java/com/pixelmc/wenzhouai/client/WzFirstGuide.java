@@ -15,7 +15,7 @@ import org.lwjgl.glfw.GLFW;
 final class WzFirstGuide {
     private static final float WIDTH = 1260, HEIGHT = 850, CARD = 310;
     private static final long STEP_MOTION = 250_000_000L, EXIT_MOTION = 320_000_000L;
-    private static final int WELCOME = 0, HIDDEN = -1;
+    private static final int WELCOME = 0, REMINDERS = 8, HIDDEN = -1;
 
     private record Lesson(String title, String body) {}
 
@@ -24,8 +24,14 @@ final class WzFirstGuide {
         new Lesson("这段对话花了多少？", "金额会随整段对话累加。把鼠标放上去，就能看到输入、输出和缓存命中的明细。"),
         new Lesson("把要问的东西带上", "用「内联物品」插入物品，或选「世界方块」引用眼前的方块和坐标。一次选一块，一条消息可以放好几块。"),
         new Lesson("接着上次的话聊", "在历史里选一段对话，就能看回之前的回答，沿着同一个问题继续追问。"),
-        new Lesson("换了话题，就开新对话", "相关的问题留在一起。问另一件事时，请先点「新对话」，避免旧上下文干扰回答、增加费用。原来的对话仍在历史里。")
+        new Lesson("换了话题，就开新对话", "相关的问题留在一起。问另一件事时，请先点「新对话」，避免旧上下文干扰回答、增加费用。原来的对话仍在历史里。"),
+        new Lesson("把回答分享给大家", "回答完成后，点「分享」预览，再发到游戏聊天栏。分享只包含当时已完成的问答，后续追问不会加进去。"),
+        new Lesson("找回别人分享的回答", "点聊天里的对话标题就能看只读快照。点开过的会保存在「收到的分享」，可以置顶或删除。没有问舟权限也能从聊天查看。"),
+        new Lesson("选择怎样收到提醒", "空白对话左下角的齿轮可以分别开关两种提醒。离开手册后，点聊天里的完成提醒就能回到原对话。")
     };
+    private static final Lesson UNREAD_LESSON = new Lesson("接着上次的话聊", "再打开问舟，会先回到生成中的对话，其次是最近的未读对话。历史里的圆点标出还没看的回答，点开就能接着聊。");
+    private static final Lesson MODEL_LESSON = new Lesson("选择模型与思考强度",
+            "通过发送按钮旁的模型选择器，可以切换模型并调整思考强度。");
 
     @FunctionalInterface
     interface Hits {
@@ -85,6 +91,20 @@ final class WzFirstGuide {
 
     boolean showingStep(int number) { return step == number; }
 
+    boolean showingReminders() { return step == REMINDERS; }
+
+    long reminderExitAt() {
+        return showingReminders() && leavingAt != 0 ? leavingAt + EXIT_MOTION : 0;
+    }
+
+    float reminderPreviewOpacity(long now, boolean reduced) {
+        return reduced ? 1 : reminderPanelProgress(now - changedAt);
+    }
+
+    static float reminderPanelProgress(long elapsed) {
+        return cubicProgress(elapsed / 200_000_000f, .22f, .68f, .18f, 1);
+    }
+
     void open(long now) { changeStep(WELCOME, now); }
 
     void reset() {
@@ -126,7 +146,7 @@ final class WzFirstGuide {
     private Action[] controls() {
         if (step == WELCOME) return new Action[] {Action.DIRECT, Action.TUTORIAL};
         if (step == 1) return new Action[] {Action.EXIT, Action.NEXT};
-        Action next = step == LESSONS.length ? Action.FINISH : Action.NEXT;
+        Action next = step == lessonCount ? Action.FINISH : Action.NEXT;
         return new Action[] {Action.EXIT, Action.PREVIOUS, next};
     }
 
@@ -151,7 +171,22 @@ final class WzFirstGuide {
         }
     }
 
-    void beginFrame() { target = null; }
+    private boolean chatGpt;
+    private int lessonCount = 5;
+
+    void beginFrame(boolean chatGpt, boolean socialEnabled) {
+        int count = socialEnabled ? LESSONS.length : 5;
+        if (lessonCount != count) {
+            lessonCount = count;
+            if (step > count) changeStep(count, System.nanoTime());
+            paragraph = null;
+        }
+        target = null;
+        if (this.chatGpt != chatGpt) {
+            this.chatGpt = chatGpt;
+            paragraph = null;
+        }
+    }
 
     void include(float x, float y, float w, float h) {
         Box box = new Box(x, y, w, h);
@@ -180,23 +215,27 @@ final class WzFirstGuide {
     }
 
     void render(HubDraw draw, long now, boolean reduced, boolean dark, float mx, float my, String focus,
-            int ink, int muted, int blue, int rule, int surface) {
+            int ink, int muted, int blue, int rule, int surface, WzWinter winter) {
         if (!active()) return;
         float opacity = leavingAt == 0 ? 1 : 1 - ease((float) (now - leavingAt) / EXIT_MOTION);
         if (opacity < 1) draw.saveLayerAlpha(0, 0, WIDTH, HEIGHT, opacity);
+        String outlineFocus = winter == null ? focus : null;
         try {
-            if (step == WELCOME) drawWelcome(draw, now, reduced, dark, mx, my, focus, ink, muted, blue, rule, surface);
-            else drawLesson(draw, now, reduced, mx, my, focus, ink, muted, blue, rule, surface);
+            if (step == WELCOME) drawWelcome(draw, now, reduced, dark, mx, my, outlineFocus, ink, muted, blue, rule, surface, winter);
+            else drawLesson(draw, now, reduced, mx, my, outlineFocus, ink, muted, blue, rule, surface, winter);
         } finally {
             if (opacity < 1) draw.restore();
         }
     }
 
     private void drawWelcome(HubDraw draw, long now, boolean reduced, boolean dark, float mx, float my, String focus,
-            int ink, int muted, int blue, int rule, int surface) {
-        draw.rect(0, 0, WIDTH, HEIGHT, dark ? 0xff1d2230 : 0xfff5f7fc);
-        gradient(draw, .84f, .85f, .55f, dark ? 0xff39304c : 0xffeae2fa);
-        gradient(draw, .24f, .18f, .56f, dark ? 0xff283c51 : 0xffd9edf7);
+            int ink, int muted, int blue, int rule, int surface, WzWinter winter) {
+        if (winter != null) winter.landing(draw, 1, 1, WIDTH - 2, HEIGHT - 2);
+        else {
+            draw.rect(0, 0, WIDTH, HEIGHT, dark ? 0xff1d2230 : 0xfff5f7fc);
+            gradient(draw, .84f, .85f, .55f, dark ? 0xff39304c : 0xffeae2fa);
+            gradient(draw, .24f, .18f, .56f, dark ? 0xff283c51 : 0xffd9edf7);
+        }
         long age = now - changedAt;
         float departing = leavingAt == 0 ? 0 : cubicProgress((now - leavingAt) / 250_000_000f, .42f, 0, 1, 1);
         if (departing >= 1) return;
@@ -222,10 +261,15 @@ final class WzFirstGuide {
             float wake = reduced ? 1 : cubicProgress(age / 800_000_000f, 0, 0, .58f, 1);
             if (wake > 0) drawWake(draw, wake, blue);
             float heading = rise(age, 250, 360, reduced);
-            float headingX = 630 - (draw.textWidth("问舟", 32, true) + 3.84f) / 2;
             float headingY = 449 + 6 * (1 - heading);
-            draw.text("问", headingX, headingY, 32, alpha(ink, heading), true);
-            draw.text("舟", headingX + draw.textWidth("问", 32, true) + 3.84f, headingY, 32, alpha(ink, heading), true);
+            if (winter != null) {
+                float headingX = 630 - draw.textWidthSerif("问舟", 32, true) / 2;
+                winter.heading(draw, "问舟", headingX, headingY, 32, alpha(ink, heading));
+            } else {
+                float headingX = 630 - (draw.textWidth("问舟", 32, true) + 3.84f) / 2;
+                draw.text("问", headingX, headingY, 32, alpha(ink, heading), true);
+                draw.text("舟", headingX + draw.textWidth("问", 32, true) + 3.84f, headingY, 32, alpha(ink, heading), true);
+            }
             float intro = rise(age, 360, 320, reduced);
             center(draw, "玩法有疑问？我可以帮你查模组代码和整合包改动。", 630, 482 + 6 * (1 - intro),
                     14, alpha(muted, intro), false);
@@ -258,9 +302,9 @@ final class WzFirstGuide {
     }
 
     private void drawLesson(HubDraw draw, long now, boolean reduced, float mx, float my, String focus,
-            int ink, int muted, int blue, int rule, int surface) {
+            int ink, int muted, int blue, int rule, int surface, WzWinter winter) {
         if (target == null) return;
-        Lesson lesson = LESSONS[step - 1];
+        Lesson lesson = chatGpt && step == 2 ? MODEL_LESSON : step == 4 && lessonCount > 5 ? UNREAD_LESSON : LESSONS[step - 1];
         if (paragraph == null || paragraphDraw != draw) {
             paragraph = new WzParagraph(draw, CARD - 38, 13, List.of(new WzParagraph.Run(lesson.body())));
             paragraphDraw = draw;
@@ -274,20 +318,24 @@ final class WzFirstGuide {
         draw.save();
         try {
             draw.canvas().clipRRect(RRect.makeXYWH(cutout.x, cutout.y, cutout.w, cutout.h, 13, 13), ClipMode.DIFFERENCE, true);
-            draw.rect(0, 0, WIDTH, HEIGHT, 0x691a2332);
+            draw.rect(0, 0, WIDTH, HEIGHT, winter != null ? 0x69233f38 : 0x691a2332);
         } finally {
             draw.restore();
         }
         draw.strokeRoundRect(cutout.x + .75f, cutout.y + .75f, cutout.w - 1.5f, cutout.h - 1.5f, 12.25f, 1.5f, blue);
-        draw.roundRect(card.x, card.y, card.w, card.h, 16, surface);
-        draw.strokeRoundRect(card.x + .5f, card.y + .5f, card.w - 1, card.h - 1, 15.5f, 1, rule);
+        if (winter != null) winter.popover(draw, card.x, card.y, card.w, card.h);
+        else {
+            draw.roundRect(card.x, card.y, card.w, card.h, 16, surface);
+            draw.strokeRoundRect(card.x + .5f, card.y + .5f, card.w - 1, card.h - 1, 15.5f, 1, rule);
+        }
 
         float x = card.x + 18, y = card.y + 16 + 6 * (1 - motion);
         WzGlyph.draw(draw, "boat", x, y, 18, alpha(muted, motion));
         draw.text("使用教程", x + 24, y + 13, 12, alpha(muted, motion), false);
-        String progress = step + " / " + LESSONS.length;
+        String progress = step + " / " + lessonCount;
         draw.text(progress, card.right() - 18 - draw.textWidth(progress, 11, false), y + 13, 11, alpha(muted, motion), false);
-        draw.text(lesson.title(), x, y + 42, 18, alpha(ink, motion), true);
+        if (winter != null) winter.heading(draw, lesson.title(), x, y + 42, 18, alpha(winter.pine(), motion));
+        else draw.text(lesson.title(), x, y + 42, 18, alpha(ink, motion), true);
         float bodyY = y + 63;
         for (WzParagraph.Line line : paragraph.lines) {
             for (WzParagraph.Part part : line.parts())
@@ -299,7 +347,7 @@ final class WzFirstGuide {
         button(draw, Action.EXIT, x, buttonY, 55, 24, false, true, 1, mx, my, focus, ink, muted, blue, rule, surface);
         if (step > 1)
             button(draw, Action.PREVIOUS, card.right() - 135, buttonY, 52, 24, false, false, 1, mx, my, focus, ink, muted, blue, rule, surface);
-        Action next = step == LESSONS.length ? Action.FINISH : Action.NEXT;
+        Action next = step == lessonCount ? Action.FINISH : Action.NEXT;
         button(draw, next, card.right() - 78, buttonY, 60, 24, true, false, 1, mx, my, focus, ink, muted, blue, rule, surface);
     }
 

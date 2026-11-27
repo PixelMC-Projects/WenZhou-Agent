@@ -67,6 +67,7 @@ public final class WenzhouAi {
                                                 .resolve("wenzhouai/admin-audit.jsonl"),
                                         WzManagerStorage.DIRECTORY,
                                         WzService.adminData())::request);
+                WzService.bindOwner(admin.ownerPlayerUuid());
             } catch (IOException | RuntimeException unavailable) {
                 LogUtils.getLogger()
                         .error(

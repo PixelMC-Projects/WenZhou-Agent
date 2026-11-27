@@ -21,29 +21,28 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-/** Authenticated web operations. Player control and receipts remain in the Manager directory. */
-public final class WzAdminBackend  {
+/** Authenticated web operations. Player access control remains in the Manager directory. */
+public final class WzAdminBackend {
     private static final int PLAYERS_PER_PAGE = 50;
     private static final int SESSIONS_PER_PAGE = 20;
     private static final Set<String> SETTINGS =
-            Set.of(
-                    "policy.draft",
-                    "policy.publish",
-                    "policy.visibility",
-                    "credential.set",
-                    "credential.remove",
-                    "reasoning.set");
+            Set.of("credential.set", "credential.remove", "reasoning.set");
+
     public interface Data {
-        JsonObject settings(String operation, JsonObject input);
+        JsonObject settings(String operation, JsonObject input) throws Exception;
+
         int sessionCount(UUID player);
-        SessionLists sessions(UUID player, boolean research) throws Exception;
-        JsonObject thread(UUID player, String id, boolean research);
-        JsonObject usage(UUID player, String id, boolean research);
+
+        JsonArray sessions(UUID player) throws Exception;
+
+        JsonObject thread(UUID player, String id);
+
+        JsonObject usage(UUID player, String id);
+
         void accessChanged(UUID player);
+
         default void quotaChanged(UUID player) {}
     }
-
-    public record SessionLists(JsonArray all, JsonArray research) {}
 
     private final Path audit;
     private final WzDirectory directory;
@@ -63,7 +62,13 @@ public final class WzAdminBackend  {
         }
         return switch (operation) {
             case "status" -> withQuotaSettings(data.settings(operation, input));
-            case "quota.set", "quota.player", "quota.reset", "quota.resetall" -> quota(operation, input, operator);
+            case "chatgpt.status" -> data.settings(operation, input);
+            case "chatgpt.login", "chatgpt.cancel", "chatgpt.logout", "chatgpt.models" -> {
+                audit(operator, operation, null, null);
+                yield data.settings(operation, input);
+            }
+            case "quota.set", "quota.player", "quota.reset", "quota.resetall" ->
+                    quota(operation, input, operator);
             case "players" -> players(input);
             case "presence" -> await(directory.profiles(true));
             case "player" -> player(uuid(input, "playerId"));
@@ -76,7 +81,9 @@ public final class WzAdminBackend  {
     }
 
     private JsonObject withQuotaSettings(JsonObject settings) throws Exception {
-        await(directory.quotaConfig()).entrySet().forEach(entry -> settings.add(entry.getKey(), entry.getValue()));
+        await(directory.quotaConfig())
+                .entrySet()
+                .forEach(entry -> settings.add(entry.getKey(), entry.getValue()));
         return settings;
     }
 
@@ -84,12 +91,13 @@ public final class WzAdminBackend  {
         boolean global = operation.equals("quota.set") || operation.equals("quota.resetall");
         UUID player = global ? null : uuid(input, "playerId");
         audit(operator, operation, player, null);
-        String command = switch (operation) {
-            case "quota.set" -> "quota.configure";
-            case "quota.player" -> "quota.edit";
-            case "quota.resetall" -> "quota.resetall";
-            default -> "quota.reset";
-        };
+        String command =
+                switch (operation) {
+                    case "quota.set" -> "quota.configure";
+                    case "quota.player" -> "quota.edit";
+                    case "quota.resetall" -> "quota.resetall";
+                    default -> "quota.reset";
+                };
         JsonObject updated = await(directory.quotaAdmin(command, input, player));
         data.quotaChanged(player);
         if (global) return updated;
@@ -99,7 +107,9 @@ public final class WzAdminBackend  {
     }
 
     private void loadQuotas(List<JsonObject> rows) throws Exception {
-        JsonObject quotas = directory.quotaRows(rows.stream().map(row -> row.get("playerId").getAsString()).toList());
+        JsonObject quotas =
+                directory.quotaRows(
+                        rows.stream().map(row -> row.get("playerId").getAsString()).toList());
         for (var row : rows) row.add("quota", quotas.get(row.get("playerId").getAsString()));
     }
 
@@ -118,19 +128,23 @@ public final class WzAdminBackend  {
             boolean isOnline = active.contains(profile.getKey());
             if ("online".equals(tab) && !isOnline || "offline".equals(tab) && isOnline) continue;
             if (!matches(query, profile.getKey(), profile.getValue())) continue;
-            candidates.add(
-                    playerIdentity(
-                            profile.getKey(),
-                            profile.getValue(),
-                            isOnline,
-                            0));
+            candidates.add(playerIdentity(profile.getKey(), profile.getValue(), isOnline, 0));
         }
-        Sort sort = sort(input, "grant", Set.of("name", "grant", "agreement", "count", "quotaLimit", "quotaRemaining", "quotaLifetime"));
-        JsonObject policy = data.settings("policy.summary", new JsonObject());
-        boolean showAgreement = policy.get("showAgreement").getAsBoolean();
-        if (sort.key.equals("agreement") && !showAgreement) sort = new Sort("grant", false);
-        boolean sortByAccess = "grant".equals(sort.key) || "agreement".equals(sort.key);
-        if (sortByAccess) loadAccess(candidates, policy, showAgreement);
+        Sort sort =
+                sort(
+                        input,
+                        "grant",
+                        Set.of(
+                                "name",
+                                "grant",
+                                "agreement",
+                                "count",
+                                "quotaLimit",
+                                "quotaRemaining",
+                                "quotaLifetime"));
+        if ("agreement".equals(sort.key)) sort = new Sort("grant", false);
+        boolean sortByAccess = "grant".equals(sort.key);
+        if (sortByAccess) loadAccess(candidates);
         if ("count".equals(sort.key)) fillCounts(candidates);
         boolean sortByQuota = sort.key.startsWith("quota");
         if (sortByQuota) loadQuotas(candidates);
@@ -140,14 +154,11 @@ public final class WzAdminBackend  {
         counts.addProperty("online", active.size());
         counts.addProperty("offline", profiles.size() - active.size());
         List<JsonObject> rows = page(candidates, input, PLAYERS_PER_PAGE);
-        if (!sortByAccess) loadAccess(rows, policy, showAgreement);
+        if (!sortByAccess) loadAccess(rows);
         if (!"count".equals(sort.key)) fillCounts(rows);
         if (!sortByQuota) loadQuotas(rows);
-        for (var row : rows) row.remove("receipt");
         JsonObject output = result(rows, candidates.size(), counts);
         output.add("onlineIds", roster.getAsJsonArray("online"));
-        output.add("policy", policy.get("policy"));
-        output.addProperty("showAgreement", showAgreement);
         return withQuotaSettings(output);
     }
 
@@ -158,45 +169,26 @@ public final class WzAdminBackend  {
     private JsonObject player(UUID player) throws Exception {
         String id = player.toString();
         String name = profileName(player);
-        JsonObject row =
-                playerIdentity(
-                        id,
-                        name,
-                        online().contains(id),
-                        data.sessionCount(player));
-        JsonObject policy = data.settings("policy.summary", new JsonObject());
+        JsonObject row = playerIdentity(id, name, online().contains(id), data.sessionCount(player));
         List<JsonObject> rows = new ArrayList<>(List.of(row));
-        loadAccess(rows, policy, policy.get("showAgreement").getAsBoolean());
+        loadAccess(rows);
         if (rows.isEmpty()) throw new IllegalArgumentException("玩家未登记");
         loadQuotas(rows);
-        row.add("policy", policy.get("policy"));
-        row.add("showAgreement", policy.get("showAgreement"));
         return row;
     }
 
-    private void loadAccess(List<JsonObject> rows, JsonObject policy, boolean showAgreement) throws Exception {
-        JsonObject byPlayer = directory.accessRows(
-                rows.stream().map(row -> row.get("playerId").getAsString()).toList(), showAgreement);
+    private void loadAccess(List<JsonObject> rows) throws Exception {
+        JsonObject byPlayer =
+                directory.accessRows(
+                        rows.stream().map(row -> row.get("playerId").getAsString()).toList(),
+                        false);
         rows.removeIf(row -> !byPlayer.has(row.get("playerId").getAsString()));
         for (JsonObject row : rows) {
             JsonObject fields = byPlayer.getAsJsonObject(row.get("playerId").getAsString());
             JsonObject access = fields.getAsJsonObject(WzDirectory.GRANT);
             row.addProperty("granted", access.get("value").getAsBoolean());
             row.addProperty("grantRevision", access.get("revision").getAsLong());
-            if (showAgreement) {
-                JsonObject receipt = fields.getAsJsonObject(WzDirectory.RECEIPT).getAsJsonObject("value");
-                row.add("receipt", receipt);
-                row.addProperty("agreement", agreementStatus(receipt, policy.getAsJsonObject("policy")));
-            }
         }
-    }
-
-    private static String agreementStatus(JsonObject receipt, JsonObject policy) {
-        if (!(receipt.get("acceptedAt") instanceof JsonPrimitive date) || !date.isNumber()
-                || date.getAsLong() <= 0 || !bool(receipt, "terms", true) || !bool(receipt, "api", true))
-            return "未同意";
-        return receipt.get("version") instanceof JsonPrimitive version
-                && policy.get("version").getAsString().equals(version.getAsString()) ? "已同意" : "需重新同意";
     }
 
     private JsonObject grant(JsonObject input, UUID operator) throws Exception {
@@ -217,15 +209,12 @@ public final class WzAdminBackend  {
         String tab = text(input, "tab", "all", 16);
         if (!Set.of("all", "research").contains(tab))
             throw new IllegalArgumentException("无效的会话筛选项");
-        boolean research = tab.equals("research");
-        Map<String, String> profiles = player == null
-                ? profiles(await(directory.profiles(false)))
-                : Map.of(player.toString(), profileName(player));
-        var lists = data.sessions(player, player == null || research);
-        List<JsonObject> all = summaries(lists.all(), profiles);
-        List<JsonObject> eligible = summaries(lists.research(), profiles);
-        int total = all.size(), authorized = eligible.size();
-        List<JsonObject> entries = research ? eligible : all;
+        Map<String, String> profiles =
+                player == null
+                        ? profiles(await(directory.profiles(false)))
+                        : Map.of(player.toString(), profileName(player));
+        List<JsonObject> entries = summaries(data.sessions(player), profiles);
+        int total = entries.size();
         String query = text(input, "query", "", 128);
         entries.removeIf(
                 row ->
@@ -238,7 +227,6 @@ public final class WzAdminBackend  {
                 comparator(sort(input, "updated", Set.of("title", "name", "count", "updated"))));
         JsonObject counts = new JsonObject();
         counts.addProperty("all", total);
-        if (player == null) counts.addProperty("research", authorized);
         return result(page(entries, input, SESSIONS_PER_PAGE), entries.size(), counts);
     }
 
@@ -246,10 +234,9 @@ public final class WzAdminBackend  {
         UUID player = uuid(input, "playerId");
         String id = sessionId(input);
         String name = profileName(player);
-        boolean research = bool(input, "research", false);
-        JsonObject thread = data.thread(player, id, research);
+        JsonObject thread = data.thread(player, id);
         if (thread == null) throw new IllegalArgumentException("会话未找到");
-        audit(operator, research ? "research.read" : "thread.read", player, id);
+        audit(operator, "thread.read", player, id);
         thread.addProperty("name", name);
         return thread;
     }
@@ -259,7 +246,7 @@ public final class WzAdminBackend  {
         String id = sessionId(input);
         if (await(directory.profile(player)).get("profile").isJsonNull())
             throw new IllegalArgumentException("玩家未登记");
-        return data.usage(player, id, bool(input, "research", false));
+        return data.usage(player, id);
     }
 
     private static String sessionId(JsonObject input) {
@@ -364,12 +351,19 @@ public final class WzAdminBackend  {
                 switch (sort.key) {
                     case "grant" -> Comparator.comparing(row -> !row.get("granted").getAsBoolean());
                     case "quotaLimit", "quotaRemaining", "quotaLifetime" ->
-                            Comparator.comparingLong(row -> {
-                                JsonObject quota = row.getAsJsonObject("quota");
-                                if (sort.key.equals("quotaLifetime")) return quota.get("lifetimeNanoYuan").getAsLong();
-                                if (quota.get("unlimited").getAsBoolean()) return Long.MAX_VALUE;
-                                return quota.get(sort.key.equals("quotaLimit") ? "limitNanoYuan" : "remainingNanoYuan").getAsLong();
-                            });
+                            Comparator.comparingLong(
+                                    row -> {
+                                        JsonObject quota = row.getAsJsonObject("quota");
+                                        if (sort.key.equals("quotaLifetime"))
+                                            return quota.get("lifetimeNanoYuan").getAsLong();
+                                        if (quota.get("unlimited").getAsBoolean())
+                                            return Long.MAX_VALUE;
+                                        return quota.get(
+                                                        sort.key.equals("quotaLimit")
+                                                                ? "limitNanoYuan"
+                                                                : "remainingNanoYuan")
+                                                .getAsLong();
+                                    });
                     case "updated", "count" ->
                             Comparator.comparingLong(row -> row.get(sort.key).getAsLong());
                     default ->

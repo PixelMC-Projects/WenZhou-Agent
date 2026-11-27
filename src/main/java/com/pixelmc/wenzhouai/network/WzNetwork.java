@@ -41,6 +41,8 @@ public final class WzNetwork {
         int requests;
         int pending;
         long window = System.nanoTime();
+        long nextShare;
+        boolean shareLinks;
 
         Connection(ServerPlayer player) {
             this.player = player;
@@ -89,6 +91,10 @@ public final class WzNetwork {
     }
 
     public static void register() {
+        MinecraftForge.EVENT_BUS.addListener((net.minecraftforge.event.RegisterCommandsEvent event) ->
+                WzChatLinks.register(event.getDispatcher(), (player, notice) -> {
+                    if (CHANNEL.isRemotePresent(player.connection.connection)) respond(player, 0, notice);
+                }));
         CHANNEL.messageBuilder(Request.class, 0, NetworkDirection.PLAY_TO_SERVER)
                 .encoder(Request::encode)
                 .decoder(Request::decode)
@@ -140,7 +146,7 @@ public final class WzNetwork {
             if (request.json.getBytes(StandardCharsets.UTF_8).length > REQUEST_LIMIT)
                 throw new IllegalArgumentException();
             body = JsonParser.parseString(request.json).getAsJsonObject();
-            if (body.size() > 5
+            if (body.size() > (request.action.equals("ask") ? 6 : 5)
                     || body.entrySet().stream()
                             .anyMatch(entry -> !entry.getValue().isJsonPrimitive()))
                 throw new IllegalArgumentException();
@@ -167,6 +173,17 @@ public final class WzNetwork {
                             }
                         }));
             } else {
+                if (request.action.equals("status")) connection.shareLinks = body.has("shareLinks") && body.get("shareLinks").getAsBoolean();
+                if (request.action.equals("share.preview")) body.addProperty("sender", player.getGameProfile().getName());
+                if (request.action.equals("share.publish")) {
+                    long now = System.nanoTime();
+                    if (now < connection.nextShare) {
+                        connection.pending--;
+                        respond(player, request.id, fail("请稍候再分享"));
+                        return;
+                    }
+                    connection.nextShare = now + 5_000_000_000L;
+                }
                 var world = request.action.equals("ask") ? connection.worldReferences.attach(player, body, generation) : null;
                 work = WzService.request(id, request.action, body, world);
             }
@@ -189,6 +206,13 @@ public final class WzNetwork {
                                             if (generation != WzService.generation(id)) {
                                                 respond(player, request.id, fail("问舟状态已变更"));
                                                 return;
+                                            }
+                                            if (error == null && request.action.equals("share.publish") && message.has("id")) {
+                                                var line = WzChatLinks.shared(player.getGameProfile().getName(),
+                                                        message.get("title").getAsString(), message.get("id").getAsString());
+                                                PLAYERS.forEach((uuid, target) -> {
+                                                    if (target.shareLinks && current(server, target, uuid)) target.player.sendSystemMessage(line);
+                                                });
                                             }
                                             respond(
                                                     player,

@@ -8,13 +8,13 @@ import com.google.gson.JsonObject;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 final class WzHistory {
@@ -25,10 +25,14 @@ final class WzHistory {
     private final Map<UUID, SummaryIndex> indices = new HashMap<>();
     private UsageSnapshot lastUsage;
 
-    record SummaryIndex(JsonArray all, JsonArray research, long since, long expiresAt,
-                        Object fileVersion) {}
-    private record UsageSnapshot(UUID player, String session, long since, long expiresAt,
-                                 Object fileVersion, WzStoredAdmin.SavedThread thread) {}
+    record SummaryIndex(JsonArray all, long expiresAt, Object fileVersion) {}
+
+    private record UsageSnapshot(
+            UUID player,
+            String session,
+            long expiresAt,
+            Object fileVersion,
+            WzStoredAdmin.SavedThread thread) {}
 
     WzHistory(Path directory) {
         this(directory, false);
@@ -41,8 +45,13 @@ final class WzHistory {
 
     private Object fileVersion(UUID player) {
         try {
-            var attributes = Files.readAttributes(directory.resolve(player + ".json"), BasicFileAttributes.class);
-            return List.of(java.util.Objects.toString(attributes.fileKey()), attributes.lastModifiedTime(), attributes.size());
+            var attributes =
+                    Files.readAttributes(
+                            directory.resolve(player + ".json"), BasicFileAttributes.class);
+            return List.of(
+                    java.util.Objects.toString(attributes.fileKey()),
+                    attributes.lastModifiedTime(),
+                    attributes.size());
         } catch (NoSuchFileException missing) {
             return null;
         } catch (IOException failure) {
@@ -144,32 +153,32 @@ final class WzHistory {
         }
     }
 
-    synchronized SummaryIndex index(UUID player, long researchSince) {
+    synchronized SummaryIndex index(UUID player) {
         SummaryIndex cached = indices.get(player);
         long now = System.currentTimeMillis();
         Object version = readOnly ? fileVersion(player) : null;
-        if (cached != null && now < cached.expiresAt
-                && java.util.Objects.equals(version, cached.fileVersion)
-                && (researchSince < 0 || researchSince == cached.since))
-            return cached;
+        if (cached != null
+                && now < cached.expiresAt
+                && java.util.Objects.equals(version, cached.fileVersion)) return cached;
         JsonObject all = load(player);
-        SummaryIndex index = new SummaryIndex(summaries(player, all, true, 0),
-                researchSince > 0 ? summaries(player, all, true, researchSince) : new JsonArray(),
-                researchSince, expiresAt(all), version);
+        SummaryIndex index =
+                new SummaryIndex(summaries(player, all, true, 0), expiresAt(all), version);
         if (all.size() > 0) indices.put(player, index);
         else indices.remove(player);
         return index;
     }
 
-    synchronized WzStoredAdmin.SavedThread savedThread(UUID player, String session, long since) {
+    synchronized WzStoredAdmin.SavedThread savedThread(UUID player, String session) {
         UsageSnapshot cached = lastUsage;
         Object version = readOnly ? fileVersion(player) : null;
-        if (cached != null && cached.player.equals(player) && cached.session.equals(session)
-                && cached.since == since && java.util.Objects.equals(version, cached.fileVersion)
+        if (cached != null
+                && cached.player.equals(player)
+                && cached.session.equals(session)
+                && java.util.Objects.equals(version, cached.fileVersion)
                 && System.currentTimeMillis() < cached.expiresAt) return cached.thread;
         JsonObject all = load(player);
-        var thread = WzStoredAdmin.snapshot(object(all, session), since);
-        lastUsage = new UsageSnapshot(player, session, since, expiresAt(all), version, thread);
+        var thread = WzStoredAdmin.snapshot(object(all, session));
+        lastUsage = new UsageSnapshot(player, session, expiresAt(all), version, thread);
         return thread;
     }
 
@@ -183,8 +192,7 @@ final class WzHistory {
         return earliest < Long.MAX_VALUE - RETENTION ? earliest + RETENTION : Long.MAX_VALUE;
     }
 
-    static JsonArray summaries(
-            UUID player, JsonObject all, boolean includeRemoved, long researchSince) {
+    static JsonArray summaries(UUID player, JsonObject all, boolean includeRemoved, long since) {
         JsonArray result = new JsonArray();
         all.entrySet().stream()
                 .map(entry -> entry.getValue().getAsJsonObject())
@@ -196,7 +204,7 @@ final class WzHistory {
                             int count = 0;
                             for (var entry : thread.getAsJsonArray("messages")) {
                                 JsonObject turn = entry.getAsJsonObject();
-                                if (number(turn, "createdAt") < researchSince) continue;
+                                if (number(turn, "createdAt") < since) continue;
                                 if (first == null) first = turn;
                                 latest = turn;
                                 count++;
@@ -205,18 +213,33 @@ final class WzHistory {
                             JsonObject row = new JsonObject();
                             row.addProperty("id", string(thread, "id"));
                             row.addProperty("playerId", player.toString());
-                            row.addProperty("title", visibleTitle(thread, first, researchSince));
+                            row.addProperty("title", visibleTitle(thread, first, since));
                             long updatedAt = number(latest, "createdAt");
                             row.addProperty("updated", updatedAt);
                             row.addProperty("updatedAt", updatedAt);
+                            if (!flag(thread, "removed") && thread.has("unreadTurn"))
+                                row.add("unreadTurn", thread.get("unreadTurn"));
                             row.addProperty("count", count);
                             row.addProperty(
                                     "pendingTopic",
                                     !string(latest, "topicToken").isEmpty()
                                             && !latest.has("reply"));
-                            row.addProperty("research", researchSince > 0);
                             result.add(row);
                         });
+        return result;
+    }
+
+    synchronized JsonArray unread(UUID player) {
+        JsonArray result = new JsonArray();
+        for (var element : index(player).all()) {
+            var row = element.getAsJsonObject();
+            if (row.has("unreadTurn")) {
+                var mark = new JsonObject();
+                mark.add("id", row.get("id"));
+                mark.add("unreadTurn", row.get("unreadTurn"));
+                result.add(mark);
+            }
+        }
         return result;
     }
 
@@ -253,7 +276,9 @@ final class WzHistory {
     }
 
     static void setGeneratedTitle(JsonObject thread, String generated, long since) {
-        if (generated.isEmpty() || since <= System.currentTimeMillis() - RETENTION || hasGeneratedTitle(thread)) return;
+        if (generated.isEmpty()
+                || since <= System.currentTimeMillis() - RETENTION
+                || hasGeneratedTitle(thread)) return;
         thread.addProperty("title", title(generated));
         thread.addProperty("titleSince", since);
     }

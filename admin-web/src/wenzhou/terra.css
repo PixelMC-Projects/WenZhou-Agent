@@ -1,0 +1,25 @@
+.wza-module .wza-terra-access { margin-top:12px; }
+.wza-module .wza-terra-access .detail-definition { margin:8px 0 0; }
+.wza-module .wza-terra-access .detail-definition > div {
+  flex-direction:row;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:12px;
+  padding:11px 0;
+}
+.wza-module .wza-terra-access dd { text-align:right; }
+.wza-module .wza-terra-access small { color:var(--muted); white-space:nowrap; }
+.wza-module .wza-terra-settings .setting-row > div:first-child { flex:none; max-width:45%; }
+.wza-module .wza-terra-player-quota .setting-row { min-height:0; padding:12px 0; }
+.wza-module .wza-terra-player-quota .custom-select { width:min(160px,49%); }
+.wza-module .wza-terra-player-quota .wza-quota-controls { margin:10px 0; justify-content:flex-start; }
+.wza-module .wza-terra-quota-settings { margin-top:20px; padding-top:16px; border-top:1px solid var(--soft-border); }
+.wza-module .wza-terra-quota-settings > .switch-row + .switch-row { margin-top:12px; }
+.wza-module .wza-terra-quota-settings .wza-quota-controls { justify-content:flex-start; flex-wrap:wrap; margin:12px 0 0; }
+.wza-module .wza-terra-billing {
+  flex-wrap:wrap;
+  justify-content:space-between;
+  padding:10px 0 14px;
+  border-bottom:1px solid var(--soft-border);
+}
+.wza-module .wza-terra-billing p { margin:0; font-size:12px; color:var(--text); }

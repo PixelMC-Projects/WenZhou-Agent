@@ -8,6 +8,8 @@ import com.google.gson.JsonObject;
 import java.util.LinkedHashMap;
 
 final class WzThreadUsage {
+    static final String CHATGPT_PLAN = "chatgpt_plan";
+    static final String OPENAI_API = "openai_api";
     private WzThreadUsage() {}
 
     static JsonObject merge(JsonArray turns, JsonArray current) {
@@ -47,7 +49,8 @@ final class WzThreadUsage {
                 continue;
             }
             byId.putIfAbsent(id, receipt.deepCopy());
-            complete &= receipt.has("nanoYuan") && receipt.has("reasoning");
+            boolean plan = WzThreadUsage.CHATGPT_PLAN.equals(string(receipt, "billing"));
+            complete &= (plan || (OPENAI_API.equals(string(receipt,"billing")) ? receipt.has("nanoUsd") : receipt.has("nanoYuan"))) && receipt.has("reasoning");
         }
         return complete;
     }

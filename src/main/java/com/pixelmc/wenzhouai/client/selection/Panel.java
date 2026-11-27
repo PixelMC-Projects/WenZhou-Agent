@@ -267,3 +267,4 @@ public final class Panel {
         g.setColor(new Color(color));g.drawString(t,x,y);
     }
 }
+

@@ -17,9 +17,13 @@ final class WzMachineRecipes {
         }
     }
 
-    static JsonObject detail(Recipe<?> recipe) {
+    static JsonObject detail(Recipe<?> recipe, RegistryAccess registries) {
         try {
-            return RecipeGameplayApi.detail(recipe);
+            try {
+                return RecipeGameplayApi.detail(recipe, registries);
+            } catch (NoSuchMethodError oldManager) {
+                return RecipeGameplayApi.detail(recipe);
+            }
         } catch (ReflectiveOperationException | LinkageError | RuntimeException unavailable) {
             return null;
         }

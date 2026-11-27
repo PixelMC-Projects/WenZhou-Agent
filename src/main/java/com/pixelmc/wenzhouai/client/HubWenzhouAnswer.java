@@ -35,7 +35,7 @@ public final class HubWenzhouAnswer {
             JsonObject alternatives) {}
 
     private record Layout(
-            int id, float width, Paragraph body, Card card, Paragraph note, int steps) {}
+            int id, float width, Paragraph body, List<Card> cards, Paragraph note, int steps) {}
 
     public record ItemFocus(String id, String label, float x, float y, float width, float height) {
         boolean contains(float px, float py) {
@@ -117,8 +117,10 @@ public final class HubWenzhouAnswer {
         try {
             d.clipRoundRect(x, y, width, height, 0);
             float bottom = paragraph(d, l.body, l.id + "-body", x, y + 8);
-            if (l.card != null && bottom < revealBottom)
-                bottom = recipe(d, l.card, l.id + "-recipe", x, bottom + 4, width);
+            for (int i = 0; i < l.cards.size() && bottom < revealBottom; i++) {
+                float gap = i == 0 ? 4 : 8;
+                bottom = recipe(d, l.cards.get(i), l.id + "-recipe-" + i, x, bottom + gap, width);
+            }
             if (l.note != null && bottom < revealBottom)
                 paragraph(d, l.note, l.id + "-note", x, bottom + 8);
         } finally {
@@ -177,7 +179,8 @@ public final class HubWenzhouAnswer {
         int lines = Math.min(steps, layout.body.value.lines.size());
         float height = 8 + lines * 15 * 1.85f;
         int remaining = steps - lines;
-        if (layout.card != null && remaining-- > 0) height += 4 + cardHeight(layout.card);
+        for (int i = 0; i < layout.cards.size() && remaining-- > 0; i++)
+            height += (i == 0 ? 4 : 8) + cardHeight(layout.cards.get(i));
         if (layout.note != null && remaining > 0)
             height += 8 + Math.min(remaining, layout.note.value.lines.size()) * 13 * 1.85f;
         return height;
@@ -188,6 +191,24 @@ public final class HubWenzhouAnswer {
         return rows * 29 - 2 + 26 + (card.shapeless ? 17 : 0);
     }
 
+    private static Card parseCard(JsonObject recipe, JsonObject items) {
+        if (recipe == null
+                || items == null
+                || !recipe.has("slots")
+                || !recipe.get("slots").isJsonArray()) return null;
+        JsonArray slots = recipe.getAsJsonArray("slots");
+        int columns = number(recipe, "columns", 3);
+        if (columns <= 0 || columns > 3 || slots.isEmpty() || slots.size() > 9) return null;
+        return new Card(
+                items,
+                slots,
+                columns,
+                string(recipe.get("output")),
+                number(recipe, "count", 1),
+                recipe.has("shapeless") && recipe.get("shapeless").getAsBoolean(),
+                object(recipe, "slotAlternatives"));
+    }
+
     private Layout layout(HubDraw d, JsonObject reply, float width, int id) {
         JsonObject items = object(reply, "items");
         Paragraph body = paragraph(d, reply.get("text"), items, width, false);
@@ -195,34 +216,26 @@ public final class HubWenzhouAnswer {
                 reply.has("note") && !reply.get("note").isJsonNull()
                         ? paragraph(d, reply.get("note"), items, width, true)
                         : null;
-        Card card = null;
-        JsonObject recipe = object(reply, "recipe");
-        if (recipe != null
-                && items != null
-                && recipe.has("slots")
-                && recipe.get("slots").isJsonArray()) {
-            JsonArray slots = recipe.getAsJsonArray("slots");
-            int columns = number(recipe, "columns", 3);
-            if (columns > 0 && columns <= 3 && slots.size() > 0 && slots.size() <= 9) {
-                card =
-                        new Card(
-                                items,
-                                slots,
-                                columns,
-                                string(recipe.get("output")),
-                                number(recipe, "count", 1),
-                                recipe.has("shapeless") && recipe.get("shapeless").getAsBoolean(),
-                                object(recipe, "slotAlternatives"));
+        List<Card> cards = new ArrayList<>();
+        if (reply.has("recipes") && reply.get("recipes").isJsonArray()) {
+            for (JsonElement element : reply.getAsJsonArray("recipes")) {
+                if (!element.isJsonObject()) continue;
+                Card card = parseCard(element.getAsJsonObject(), items);
+                if (card != null) cards.add(card);
             }
+        }
+        if (cards.isEmpty()) {
+            Card single = parseCard(object(reply, "recipe"), items);
+            if (single != null) cards.add(single);
         }
         return new Layout(
                 id,
                 width,
                 body,
-                card,
+                List.copyOf(cards),
                 note,
                 body.value.lines.size()
-                        + (card == null ? 0 : 1)
+                        + cards.size()
                         + (note == null ? 0 : note.value.lines.size()));
     }
 
@@ -232,7 +245,7 @@ public final class HubWenzhouAnswer {
         if (value != null && value.isJsonArray()) {
             for (JsonElement part : value.getAsJsonArray()) {
                 if (!part.isJsonObject()) {
-                    runs.add(new WzParagraph.Run(string(part)));
+                    addLocalized(runs, string(part));
                     continue;
                 }
                 JsonObject ref = part.getAsJsonObject();
@@ -243,8 +256,11 @@ public final class HubWenzhouAnswer {
                     int last = runs.size() - 1;
                     WzParagraph.Run previous = runs.get(last);
                     if (previous.item() == null && !previous.muted()) {
-                        String prefix = WzAnswerMarkdown.beforeItem(previous.text(), label, string(data.get("name")));
-                        if (!prefix.equals(previous.text())) runs.set(last, new WzParagraph.Run(prefix));
+                        String prefix =
+                                WzAnswerMarkdown.beforeItem(
+                                        previous.text(), label, string(data.get("name")));
+                        if (!prefix.equals(previous.text()))
+                            runs.set(last, new WzParagraph.Run(prefix));
                     }
                 }
                 runs.add(
@@ -254,13 +270,42 @@ public final class HubWenzhouAnswer {
                 if (!explanation.isEmpty())
                     runs.add(new WzParagraph.Run("（" + explanation + "）", false, true, null, null));
             }
-        } else runs.add(new WzParagraph.Run(string(value)));
-        return new Paragraph(new WzParagraph(d, w, note ? 13 : 15, WzAnswerMarkdown.format(runs)), note);
+        } else addLocalized(runs, string(value));
+        return new Paragraph(WzAnswerMarkdown.layout(d, w, note ? 13 : 15, runs), note);
+    }
+
+    private static final java.util.regex.Pattern ITEM_KEY =
+            java.util.regex.Pattern.compile(
+                    "(?<![a-z0-9_.])(?:item|block)\\.([a-z0-9_-]+)\\.([a-z0-9_/.-]*[a-z0-9_-])");
+
+    private void addLocalized(List<WzParagraph.Run> runs, String text) {
+        var keys = ITEM_KEY.matcher(text);
+        int end = 0;
+        while (hasRegistry && keys.find()) {
+            var id = ResourceLocation.tryParse(keys.group(1) + ":" + keys.group(2));
+            if (id == null || !ForgeRegistries.ITEMS.containsKey(id)) continue;
+            var stack = new ItemStack(ForgeRegistries.ITEMS.getValue(id));
+            if (!stack.getDescriptionId().equals(keys.group())) continue;
+            if (keys.start() > end)
+                runs.add(new WzParagraph.Run(text.substring(end, keys.start())));
+            var item = new JsonObject();
+            item.addProperty("id", id.toString());
+            runs.add(new WzParagraph.Run(displayName(item), false, false, null, item));
+            end = keys.end();
+        }
+        if (end < text.length()) runs.add(new WzParagraph.Run(text.substring(end)));
+    }
+
+    private WzWinter winter;
+
+    void appearance(WzWinter value) {
+        winter = value;
     }
 
     private float paragraph(HubDraw d, Paragraph p, String key, float x, float y) {
         float size = p.note ? 13 : 15, lineHeight = size * 1.85f;
-        int ink = d.dark() ? 0xffe2e8f5 : 0xff343d54, muted = d.dark() ? 0xffadb9d2 : 0xff677591;
+        int ink = winter != null ? winter.ink() : d.dark() ? 0xffe2e8f5 : 0xff343d54;
+        int muted = winter != null ? winter.muted() : d.dark() ? 0xffadb9d2 : 0xff677591;
         for (int i = 0; i < p.value.lines.size(); i++) {
             float top = y + i * lineHeight;
             if (top >= revealBottom) break;
@@ -353,8 +398,8 @@ public final class HubWenzhouAnswer {
                                 13);
         float labelWidth = d.textWidth(label, 13, false);
         float w = Math.min(width, outX - x + 50 + labelWidth + countWidth), h = cardHeight(card);
-        int rule = d.dark() ? 0x4095abc9 : 0x366a7c9e;
-        int ink = d.dark() ? 0xffdfe7f4 : 0xff46536e;
+        int rule = winter != null ? winter.ruling() : d.dark() ? 0x4095abc9 : 0x366a7c9e;
+        int ink = winter != null ? winter.ink() : d.dark() ? 0xffdfe7f4 : 0xff46536e;
         float topInset = card.shapeless ? 30 : 13;
         if (y >= clipY + clipH || y + h <= clipY) return y + h;
         d.strokeRoundRect(x, y, w, h, 12, 1, rule);
@@ -517,11 +562,12 @@ public final class HubWenzhouAnswer {
         }
         if (shown == null) return;
         ItemFocus target = shown.focus;
-        var bounds = new WzItemTooltip.Bounds(
-                (int) Math.floor(originX + target.x * sx),
-                (int) Math.floor(originY + target.y * sy),
-                (int) Math.ceil(originX + (target.x + target.width) * sx),
-                (int) Math.ceil(originY + (target.y + target.height) * sy));
+        var bounds =
+                new WzItemTooltip.Bounds(
+                        (int) Math.floor(originX + target.x * sx),
+                        (int) Math.floor(originY + target.y * sy),
+                        (int) Math.ceil(originX + (target.x + target.width) * sx),
+                        (int) Math.ceil(originY + (target.y + target.height) * sy));
         boolean hovering = target.contains((mx - originX) / sx, (my - originY) / sy);
         int tooltipX = hovering ? mx : bounds.right();
         int tooltipY = hovering ? my : (bounds.top() + bounds.bottom()) / 2;
@@ -577,12 +623,15 @@ public final class HubWenzhouAnswer {
         if (measuredLanguage != null) {
             ItemStack item = stacks.computeIfAbsent(data, HubWenzhouAnswer::stack);
             if (!item.isEmpty()) {
-                String localized = net.minecraft.ChatFormatting.stripFormatting(item.getHoverName().getString());
-                if (!localized.isBlank()) return localized;
+                String localized =
+                        net.minecraft.ChatFormatting.stripFormatting(
+                                item.getHoverName().getString());
+                if (!localized.isBlank() && !localized.equals(item.getDescriptionId()))
+                    return localized;
             }
         }
         String name = net.minecraft.ChatFormatting.stripFormatting(string(data.get("name")));
-        return name.isBlank() ? string(data.get("id")) : name;
+        return name.isBlank() || ITEM_KEY.matcher(name).matches() ? string(data.get("id")) : name;
     }
 
     static ItemStack stack(JsonObject data) {

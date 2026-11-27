@@ -124,3 +124,4 @@ final class WenzhouKnowledge {
         return row.has(key) ? row.get(key).getAsString() : "";
     }
 }
+

@@ -145,3 +145,4 @@ public final class OutlinePath {
         return ids.computeIfAbsent(point,p -> {nodes.add(p);return nodes.size()-1;});
     }
 }
+

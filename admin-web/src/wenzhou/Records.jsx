@@ -2,10 +2,11 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {ArrowLeft, ArrowSquareOut, ChatCircleText, MagnifyingGlass, Rows, Users} from '@phosphor-icons/react';
 import {Empty, ErrorNotice, Modal, Pagination, Switch, useDebounced} from '@manager-console/titles/ui.jsx';
 import {QuotaCells, PlayerQuota} from './Quota.jsx';
+import {PlayerTerraAccess} from './Terra.jsx';
 import {SortLabel} from '@manager-console/titles/SortLabel.jsx';
 import {usageDisplay} from './usage.js';
 import {request} from './api.js';
-import {allowsApi, answerLines, formatTime, receiptStatus} from './data.js';
+import {answerLines, formatTime} from './data.js';
 
 const playersPerPage = 50;
 const sessionsPerPage = 20;
@@ -76,7 +77,7 @@ function Identity({player}) {
       <small className="mono player-uuid" title={player.playerId}>{player.playerId}</small></span></>;
 }
 
-function PlayerDetail({player,policy,showAgreement,hidden,onOpen,onChange,onUnavailable,tab,setTab,toast,gameConnected,summary,refresh,revisionRef,recordsRevision,presenceRevision}) {
+function PlayerDetail({player,hidden,onOpen,onChange,onUnavailable,tab,setTab,toast,gameConnected,summary,refresh,revisionRef,recordsRevision,presenceRevision,terraRevision}) {
   const [history,setHistory] = useState(null);
   const [historyError,setHistoryError] = useState('');
   const [page,setPage] = useState(0);
@@ -116,29 +117,21 @@ function PlayerDetail({player,policy,showAgreement,hidden,onOpen,onChange,onUnav
     finally { setBusy(false); }
   }
 
-  const receipt = player.receipt;
-  const status = receiptStatus(receipt,policy);
   return <>
     <div className="view-bar" hidden={hidden}><Tabs label="玩家详情" value={tab} select={setTab}
-      items={[[ 'access',showAgreement?'权限与协议':'访问权限'],['history','历史会话',player.count]]}/></div>
+      items={[['access','访问权限'],['history','历史会话',player.count]]}/></div>
     <div className="editor-body" hidden={hidden}>
       <ErrorNotice error={tab==='history'?historyError:error}/>
       {tab==='access'?<>
         <div className="wza-player player-link"><Identity player={player}/></div>
         <Switch label="允许访问问舟" value={player.granted} disabled={busy} onChange={changeGrant}
           description="授权后，玩家手册左侧将出现问舟入口。"/>
+        <PlayerTerraAccess api={request} playerId={player.playerId} granted={player.granted} disabled={busy}
+          revision={recordsRevision + '/' + terraRevision + '/' + player.grantRevision} toast={toast}/>
         <PlayerQuota quota={player.quota} toast={toast} mutate={async (operation,body) => {
           const result = await request(operation, {...body,playerId:player.playerId});
           onChange(player.playerId,{quota:result.quota});
         }}/>
-        {showAgreement && <section className="wza-agreement"><h3>用户协议</h3><dl className="detail-definition">
-          <div><dt>当前状态</dt><dd>{status}</dd></div>
-          <div><dt>生效版本</dt><dd>{policy.versionLabel || policy.version}</dd></div>
-          <div><dt>玩家同意版本</dt><dd>{status==='已同意' ? policy.versionLabel || policy.version : receipt?.version || '—'}</dd></div>
-          <div><dt>同意时间</dt><dd>{formatTime(receipt?.acceptedAt)}</dd></div>
-          <div><dt>发送至 DeepSeek</dt><dd>{allowsApi(receipt)?'已同意':'未同意'}</dd></div>
-          <div><dt>问答优化授权</dt><dd>{receipt?.research?(status==='已同意'?'已授权':'待重新确认'):'未授权'}</dd></div>
-        </dl></section>}
       </>: <>
         {!visibleHistory && !historyError && <span role="status">正在加载历史会话…</span>}
         {visibleHistory?.rows.map(row=><button key={row.id} className="wza-history" onClick={event=>onOpen(row,event.currentTarget)}>
@@ -159,26 +152,16 @@ function Thread({row, listRow, bodyRef, onUpdate, onUnavailable, gameConnected, 
 
   useEffect(()=>pollVisible(async signal => {
     const {row,listRow} = snapshot.current;
-    const input = {id:row.id,playerId:row.playerId,research:row.studyOnly};
+    const input = {id:row.id,playerId:row.playerId};
     try {
       const latest = await request('thread.usage', input, signal, gameConnected);
       if (signal.aborted) return;
-      if (row.studyOnly && latest.researchSince !== undefined && row.researchSince !== undefined
-          && latest.researchSince !== row.researchSince) {
-        onUnavailable(new Error('问答优化授权已变化，请重新打开会话。'));
-        return;
-      }
       const changed = latest.bodyVersion
         ? row.bodyVersion !== latest.bodyVersion
         : listRow && !sameSummary(row,listRow);
       if (changed || latest.running !== row.running) {
         const detail = await request('thread', input, signal, gameConnected);
         if (signal.aborted) return;
-        if (row.studyOnly && row.researchSince !== undefined && detail.researchSince !== undefined
-            && row.researchSince !== detail.researchSince) {
-          onUnavailable(new Error('问答优化授权已变化，请重新打开会话。'));
-          return;
-        }
         onUpdate(row, detail);
         setUsage(null);
       } else setUsage(latest);
@@ -188,7 +171,7 @@ function Thread({row, listRow, bodyRef, onUpdate, onUnavailable, gameConnected, 
       if ([400,401,403,404].includes(e.status)) onUnavailable(e);
       else setStale(true);
     }
-  }, 2000, Boolean(recordsRevision)),[row.id,row.playerId,row.studyOnly,onUpdate,onUnavailable,gameConnected,recordsRevision]);
+  }, 2000, Boolean(recordsRevision)),[row.id,row.playerId,onUpdate,onUnavailable,gameConnected,recordsRevision]);
 
   const usageState = usage ?? {receipts:row.usageReceipts, missing:row.usageMissing, running:row.running};
   const usageTurns = Array.isArray(usageState.receipts) ? [{usageReceipts:usageState.receipts}] : row.turns;
@@ -233,7 +216,7 @@ const ThreadTurns = React.memo(function ThreadTurns({row}) {
   </>;
 });
 
-export default function Records({people,toast,gameConnected,recordsRevision,presenceRevision}) {
+export default function Records({people,toast,gameConnected,recordsRevision,presenceRevision,terraRevision}) {
   const size = people ? playersPerPage : sessionsPerPage;
   const [tab,setTab] = useState('all');
   const [compact,setCompact] = useState(false);
@@ -340,11 +323,10 @@ export default function Records({people,toast,gameConnected,recordsRevision,pres
   },[activePlayerId,gameConnected,refresh,recordsRevision,presenceRevision,closeUnavailable,refreshLists,toast]);
 
   const visible = result?.tab === tab && result.page === page ? result : null;
-  const showAgreement = result?.showAgreement === true;
   const counts = result?.counts || {};
   const tabs = people ? [['all','全部玩家',counts.all??null],['online','在线玩家',counts.online??null],['offline','离线玩家',counts.offline??null]]
-    : [['all','全部会话',counts.all??null],['research','已授权问答优化',counts.research??null]];
-  const columns = people ? [['name','玩家'],['grant','访问权限'],...(showAgreement ? [['agreement','用户协议']] : []),['count','会话数'],
+    : [['all','全部会话',counts.all??null]];
+  const columns = people ? [['name','玩家'],['grant','访问权限'],['count','会话数'],
       ['quotaLimit','每周限额'],['quotaRemaining','剩余额度'],['quotaLifetime','累计 API 消耗']]
     : [['title','会话'],['name','玩家'],['count','问答轮数'],['updated','最近消息']];
 
@@ -356,7 +338,7 @@ export default function Records({people,toast,gameConnected,recordsRevision,pres
     try {
       const detail = await request(operation, input, controller.signal, gameConnected);
       if (!controller.signal.aborted) {
-        select({...detail, studyOnly:input.research});
+        select(detail);
         if (operation === 'thread' && !sameSummary(row,detail)) syncSummary(detail);
       }
     } catch (e) {
@@ -374,13 +356,13 @@ export default function Records({people,toast,gameConnected,recordsRevision,pres
   },[people,refreshLists]);
 
   const updateThread = useCallback((previous,detail) => {
-    setSelected(current => current === previous ? {...detail,studyOnly:previous.studyOnly} : current);
+    setSelected(current => current === previous ? detail : current);
     if (!sameSummary(previous,detail)) syncSummary(detail);
   },[syncSummary]);
 
   function showThread(row, trigger) {
     historyButton.current = trigger;
-    openDetail('thread', {id:row.id, playerId:row.playerId, research:!people && tab === 'research'}, row, setSelected);
+    openDetail('thread', {id:row.id, playerId:row.playerId}, row, setSelected);
   }
 
   function closeDetail() {
@@ -406,7 +388,7 @@ export default function Records({people,toast,gameConnected,recordsRevision,pres
         <Rows size={14}/>{compact?'紧凑':'舒适'}
       </button></div>
     </div>
-    <div className="content-area" data-compact={compact} data-agreement={showAgreement?'shown':'hidden'}>
+    <div className="content-area" data-compact={compact}>
       <div className="list-search-row"><MagnifyingGlass size={15}/><input aria-label={people?'搜索玩家':'搜索会话'}
         value={search} placeholder={people?'搜索玩家名或 UUID…':'搜索会话标题或玩家…'} onChange={e=>{setSearch(e.target.value);setPage(0);}}/></div>
       <div className={'table-heading wza-grid '+(people?'wza-players':'wza-chats')}>{columns.map(([field,label])=>
@@ -417,10 +399,10 @@ export default function Records({people,toast,gameConnected,recordsRevision,pres
         {visible?.rows.map(row=><button type="button" key={people?row.playerId:row.playerId+'/'+row.id}
           className={'player-row wza-grid wza-record '+(people?'wza-players':'wza-chats')} onClick={event=>people?showPlayer(row):showThread(row,event.currentTarget)}>
           {people?<><span className="player-link"><Identity player={row}/></span><span className={row.granted?'wza-granted':'muted'}>
-            {row.granted?'已授权':'未授权'}</span>{showAgreement&&<span>{row.agreement}</span>}<span>{row.count}</span><QuotaCells quota={row.quota}/></>
+            {row.granted?'已授权':'未授权'}</span><span>{row.count}</span><QuotaCells quota={row.quota}/></>
             :<><strong className="wza-subject">{row.title}</strong><span>{row.name}</span><span>{row.count}</span><time>{formatTime(row.updated)}</time></>}
         </button>)}
-        {visible?.total===0&&<Empty icon={people?Users:ChatCircleText} title={query?'没有匹配的结果':tab==='research'?'暂无可用于优化的会话':'暂无记录'}/>}
+        {visible?.total===0&&<Empty icon={people?Users:ChatCircleText} title={query?'没有匹配的结果':'暂无记录'}/>}
       </div>
     </div>
     {result?.tab === tab && <Pagination page={page} size={size} total={result.total} onPage={setPage}>{people ? '每页 50 名玩家' : '每页 20 条会话'} · 北京时间</Pagination>}
@@ -431,9 +413,8 @@ export default function Records({people,toast,gameConnected,recordsRevision,pres
       {(selected?.loading || player?.loading) && <div className="editor-body" role="status">正在读取详情…</div>}
       {player && !player.loading && <PlayerDetail key={player.playerId}
         player={Array.isArray(visible?.onlineIds) ? {...player,isOnline:visible.onlineIds.includes(player.playerId)} : player}
-        policy={player.policy} showAgreement={player.showAgreement}
         hidden={Boolean(selected)} tab={playerTab} setTab={setPlayerTab} toast={toast} onOpen={showThread} gameConnected={gameConnected}
-        summary={historySummary} refresh={refresh} revisionRef={listRevision} recordsRevision={recordsRevision} presenceRevision={presenceRevision}
+        summary={historySummary} refresh={refresh} revisionRef={listRevision} recordsRevision={recordsRevision} presenceRevision={presenceRevision} terraRevision={terraRevision}
         onUnavailable={closeUnavailable} onChange={updatePlayer}/>}
       {loaded && <Thread key={selectedKey} row={selected} listRow={people ? null : visible?.rows.find(row=>sameThread(row,selected))}
         bodyRef={threadBody} onUpdate={updateThread} onUnavailable={closeUnavailable} gameConnected={gameConnected} recordsRevision={recordsRevision}/>}
