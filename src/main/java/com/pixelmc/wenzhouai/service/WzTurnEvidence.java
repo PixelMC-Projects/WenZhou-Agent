@@ -23,8 +23,10 @@ final class WzTurnEvidence {
                     "(?:不|无法|很难)(?:能|足以)?(?:确认|确定|断定|断言|证明|说明|排除)|不等于|并非|并不是|(?:尚未|有待)(?:确认|核实)");
     private static final Pattern EXCLUSIVE_DROP =
             Pattern.compile(
-                    "(?:一只|单只|一击|一次击杀|每只|同一次击杀).{0,30}(?:不可能|无法|不能|绝不|必定只|只能|0[%％])"
-                            + "|(?:不可能|无法|不能|绝不).{0,12}(?:同时掉|一次掉齐|同时获得)");
+                    "(?:一只|单只|一击|一次击杀|每只|同一次击杀)[^。！？!?；;\\n"
+                        + "]{0,30}(?:不可能|无法|不能|绝不|必定只|只能|0[%％])[^。！？!?；;\\n"
+                        + "]{0,16}(?:掉|爆|产出|战利品|出货)|(?:不可能|无法|不能|绝不)[^。！？!?；;\\n"
+                        + "]{0,12}(?:同时掉|一次掉齐|同时爆|同时产出)");
     private boolean lootPool;
     private final Set<String> gaps = new LinkedHashSet<>();
     private final Map<String, String> firstOccurrence = new HashMap<>();
@@ -84,7 +86,8 @@ final class WzTurnEvidence {
     }
 
     void observe(JsonObject result) {
-        if ("loaded_loot_pools".equals(WzData.string(result, "probability_scope"))) lootPool = true;
+        if ("loaded_loot_pools".equals(WzData.string(result, "probability_scope"))
+                && WzData.string(result, "table").contains(":entities/")) lootPool = true;
         var changes = WzData.object(result, "pack_changes");
         if (WzData.number(changes, "unreadable") > 0 || WzData.flag(changes, "more"))
             gaps.add("部分战利品修改尚未核实");

@@ -42,6 +42,7 @@ final class WenzhouChat {
             "本轮查阅步数或上下文已较多，请只补查最关键的 1~2 项缺口并尽快总结作答，不要继续发散或深挖底层源码。";
     private static final String HARD_WRAP_INSTRUCTION =
             "本轮查阅已达到上限，已停止继续调用工具。请直接根据已有证据向玩家给出清晰回答：先说明已核实的结论或可行做法，再简明指出尚未核实的部分，不要输出任何工具调用格式。";
+    private static final String AUTO_REVIEW_WARNING = "\n\n经自动识别，该回答可能存在问题，请注意甄别。";
     private static final Pattern ITEM_REFERENCE =
             Pattern.compile("\\[\\[item:([a-z0-9_.-]+:[a-z0-9_./-]+)]]");
     private static final JsonArray TOOLS = tools();
@@ -842,34 +843,44 @@ final class WenzhouChat {
                 remindedAboutMemory = true;
                 nextInstruction =
                         "先调用一个或多个 save_memory 选择本轮 memory_facts 的新事实，或调用 skip_memory"
-                            + " 给出跳过原因。收到回执后再回答。";
+                                + " 给出跳过原因。收到回执后再回答。";
                 continue;
             }
             if ("stop".equals(reason) && !content.isEmpty() && !hasCalls) {
                 PublicAnswer answer = PublicAnswer.read(content);
                 if (answer.text().isEmpty()) throw new Notice("问舟本轮没有给出回答正文。");
+                boolean needsAutoWarning = false;
                 String gaps = evidence.review(answer.text());
                 if (!gaps.isEmpty()) {
-                    resetPreview.run();
-                    if (correctingCoverage) throw new Notice("当前证据不足以支持这项结论。");
-                    correctingCoverage = true;
-                    nextInstruction =
-                            "草稿的断言超出了证据范围：" + gaps + "。保留已核实的条件、概率和可行做法，明确限定结论适用的来源。根据现有记录直接回答。";
-                    continue;
+                    if (!correctingCoverage) {
+                        resetPreview.run();
+                        correctingCoverage = true;
+                        nextInstruction =
+                                "草稿的断言超出了证据范围："
+                                        + gaps
+                                        + "。保留已核实的条件、概率和可行做法，明确限定结论适用的来源。根据现有记录直接回答。";
+                        continue;
+                    }
+                    needsAutoWarning = true;
                 }
                 String invalid = checkReferences.apply(answer.text());
                 if (!invalid.isEmpty()) {
-                    if (correctingReferences) throw new Notice("部分物品或配方引用仍无法核实，本轮没有生成可靠的攻略。");
-                    correctingReferences = true;
-                    nextInstruction =
-                            "上一版中这些引用未通过本服检查："
-                                    + invalid
-                                    + "。直接依据已有证据重写，只保留已核实的步骤；缺少可获取前提就明确说明，勿猜译名或换成无引用的相同断言。";
-                    continue;
+                    if (!correctingReferences) {
+                        resetPreview.run();
+                        correctingReferences = true;
+                        nextInstruction =
+                                "上一版中这些引用未通过本服检查："
+                                        + invalid
+                                        + "。直接依据已有证据重写，只保留已核实的步骤；缺少可获取前提就明确说明，勿猜译名或换成无引用的相同断言。";
+                        continue;
+                    }
+                    needsAutoWarning = true;
                 }
-                assistant.addProperty("content", answer.text());
+                String finalText =
+                        needsAutoWarning ? answer.text() + AUTO_REVIEW_WARNING : answer.text();
+                assistant.addProperty("content", finalText);
                 messages.add(assistant);
-                return new Result(messages, answer.text(), answer.summary());
+                return new Result(messages, finalText, answer.summary());
             }
             if (leakedMarkup && !toolTurn) {
                 // Keep completed tool-call pairs available for a follow-up even on a malformed
