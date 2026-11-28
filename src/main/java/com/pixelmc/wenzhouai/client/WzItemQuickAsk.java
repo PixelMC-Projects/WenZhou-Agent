@@ -2,6 +2,7 @@
 package com.pixelmc.wenzhouai.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.platform.Window;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.pixelmc.hub.client.ClientBootstrap;
 import com.pixelmc.hub.client.ClientHubSession;
@@ -18,8 +19,16 @@ import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipComponent;
+import net.minecraft.client.gui.screens.inventory.tooltip.ClientTooltipPositioner;
+import net.minecraft.client.gui.screens.inventory.tooltip.DefaultTooltipPositioner;
 import net.minecraft.client.gui.screens.recipebook.RecipeUpdateListener;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.api.distmarker.Dist;
@@ -33,14 +42,23 @@ import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.registries.ForgeRegistries;
 
+import org.joml.Matrix4f;
+import org.joml.Vector2i;
 import org.joml.Vector2ic;
 import org.lwjgl.glfw.GLFW;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Locale;
 
 /**
- * Renders the JEI-styled blue-white gradient quick-ask hint bar beneath hovered item tooltips and
- * opens Wenzhou's dedicated item quick-ask stage when the bound hotkey (default G) is pressed.
+ * Renders the blue-white gradient quick-ask hint capsule beneath hovered item tooltips and opens
+ * Wenzhou's dedicated item quick-ask stage when the bound hotkey (default G) is pressed.
+ *
+ * <p>When ModernUI tooltips are active, matches ModernUI's exact sub-pixel positioning and
+ * delegates box + text rendering to ModernUI's TooltipRenderer so border radius, width, gap, motion
+ * smoothness and HarfBuzz typography match the main item tooltip seamlessly.
  */
 @Mod.EventBusSubscriber(modid = "wenzhouai", value = Dist.CLIENT)
 public final class WzItemQuickAsk {
@@ -56,19 +74,23 @@ public final class WzItemQuickAsk {
     private static final int GRAD_LEFT = 0xFF74C4FF;
     private static final int GRAD_MID = 0xFFC8E9FF;
     private static final int GRAD_RIGHT = 0xFFFFFFFF;
-    private static final int GAP = 6;
-    private static final int SUB_HEIGHT = 20;
+    // ModernUI draws 4px inner padding + ~0.67px outer half-stroke per side (~9.34px combined
+    // between top inner bottom and bottom inner top), so 12.0px yields a crisp ~2.7px visual gap.
+    private static final float MODERN_UI_INNER_GAP = 12.0f;
+    private static final int FALLBACK_VISUAL_GAP = 3;
     private static final long SNAPSHOT_TTL_NANOS = 150_000_000L;
 
     private record HoverSnapshot(
-            ItemStack stack,
+            ItemStack rawStack,
+            ItemStack stackCopy,
             ResourceLocation id,
-            int boxX,
-            int boxY,
-            int boxW,
-            int boxH,
+            float tooltipX,
+            float tooltipY,
+            int contentW,
+            int contentH,
             int screenW,
             int screenH,
+            boolean modernUiActive,
             boolean jeiSource,
             Screen screen,
             long capturedAt) {}
@@ -104,34 +126,83 @@ public final class WzItemQuickAsk {
         ResourceLocation id = ForgeRegistries.ITEMS.getKey(stack.getItem());
         if (id == null) return;
 
+        List<ClientTooltipComponent> components = event.getComponents();
+        if (components.isEmpty()) return;
+
         int contentW = 0;
-        int contentH = event.getComponents().size() == 1 ? -2 : 0;
-        for (var component : event.getComponents()) {
+        int contentH = components.size() == 1 ? -2 : 0;
+        for (var component : components) {
             contentW = Math.max(contentW, component.getWidth(event.getFont()));
             contentH += component.getHeight();
         }
         int screenW = event.getScreenWidth();
         int screenH = event.getScreenHeight();
-        Vector2ic pos =
-                event.getTooltipPositioner()
-                        .positionTooltip(
-                                screenW, screenH, event.getX(), event.getY(), contentW, contentH);
-        int boxX = pos.x() - 4;
-        int boxY = pos.y() - 4;
-        int boxW = contentW + 8;
-        int boxH = contentH + 8;
-        boolean jeiSource = isJeiTooltip(screen, stack, event.getX(), event.getY());
 
+        boolean modernUi = ModernUiBridge.isTooltipActive();
+        float tooltipX;
+        float tooltipY;
+        if (modernUi
+                && ModernUiBridge.isExactPositioning()
+                && event.getTooltipPositioner() instanceof DefaultTooltipPositioner) {
+            // Mirror ModernUI UIManager.drawExtTooltip + TooltipRenderer.drawTooltip exactly.
+            Window window = mc.getWindow();
+            double cursorX =
+                    mc.mouseHandler.xpos()
+                            * (double) window.getGuiScaledWidth()
+                            / (double) window.getScreenWidth();
+            double cursorY =
+                    mc.mouseHandler.ypos()
+                            * (double) window.getGuiScaledHeight()
+                            / (double) window.getScreenHeight();
+            int mouseX = (int) cursorX;
+            int mouseY = (int) cursorY;
+            float partialX = 0f;
+            float partialY = 0f;
+            if (event.getX() == mouseX && event.getY() == mouseY) {
+                partialX = (float) (cursorX - (double) mouseX);
+                partialY = (float) (cursorY - (double) mouseY);
+            }
+            tooltipX = event.getX() + 12.0f + partialX;
+            if (tooltipX - partialX + (float) contentW + 4.0f > (float) screenW) {
+                tooltipX -= (28.0f + (float) contentW);
+            }
+            tooltipY = event.getY() - 12.0f + partialY;
+            if (tooltipY + (float) contentH + 6.0f > (float) screenH) {
+                tooltipY = (float) (screenH - contentH - 6);
+            }
+            if (tooltipY < 6.0f) {
+                tooltipY = 6.0f;
+            }
+        } else {
+            // Vanilla GuiGraphics adds +2 after the first component when multiple lines exist.
+            int vanillaH = components.size() > 1 ? contentH + 2 : contentH;
+            Vector2ic pos =
+                    event.getTooltipPositioner()
+                            .positionTooltip(
+                                    screenW,
+                                    screenH,
+                                    event.getX(),
+                                    event.getY(),
+                                    contentW,
+                                    vanillaH);
+            tooltipX = pos.x();
+            tooltipY = pos.y();
+            contentH = vanillaH;
+        }
+
+        boolean jeiSource = isJeiTooltip(screen, stack, event.getX(), event.getY());
         HoverSnapshot snap =
                 new HoverSnapshot(
+                        stack,
                         stack.copyWithCount(1),
                         id,
-                        boxX,
-                        boxY,
-                        boxW,
-                        boxH,
+                        tooltipX,
+                        tooltipY,
+                        contentW,
+                        contentH,
                         screenW,
                         screenH,
+                        modernUi,
                         jeiSource,
                         screen,
                         System.nanoTime());
@@ -153,29 +224,55 @@ public final class WzItemQuickAsk {
         boolean typing = isTypingInScreen(event.getScreen());
         String label = "按 [" + keyDisplayName() + "] 向问舟提问...";
         String typingNote = typing ? "  输入中已暂停" : "";
-        int textW = font.width(label) + (typing ? font.width(typingNote) : 0);
-        int subW = Math.max(snap.boxW, textW + 18);
-        int subH = SUB_HEIGHT;
 
-        int subX = Math.max(6, Math.min(snap.boxX, snap.screenW - subW - 6));
-        int subY = snap.boxY + snap.boxH + GAP;
-        if (subY + subH > snap.screenH - 6) {
-            subY = Math.max(6, snap.boxY - GAP - subH);
-        }
+        MutableComponent textComponent = buildHintComponent(label, typingNote, typing);
+        FormattedCharSequence visualText = textComponent.getVisualOrderText();
+        int textW = font.width(visualText);
+        int subInnerW = Math.max(snap.contentW, textW);
+        int subInnerH = font.lineHeight;
 
         GuiGraphics graphics = event.getGuiGraphics();
+        if (snap.modernUiActive) {
+            float subX =
+                    Math.max(
+                            6.0f, Math.min(snap.tooltipX, (float) snap.screenW - subInnerW - 6.0f));
+            float subY = snap.tooltipY + (float) snap.contentH + MODERN_UI_INNER_GAP;
+            if (subY + (float) subInnerH + 6.0f > (float) snap.screenH) {
+                subY = Math.max(6.0f, snap.tooltipY - (float) subInnerH - MODERN_UI_INNER_GAP);
+            }
+            if (ModernUiBridge.drawCapsule(
+                    snap.rawStack,
+                    graphics,
+                    font,
+                    visualText,
+                    subInnerW,
+                    subX,
+                    subY,
+                    snap.screenW,
+                    snap.screenH)) {
+                return;
+            }
+        }
+
+        // Vanilla / non-ModernUI fallback using the same single-run gradient typography.
+        int boxW = subInnerW + 8;
+        int boxH = subInnerH + 8;
+        float boxX = Math.max(4.0f, Math.min(snap.tooltipX - 4.0f, snap.screenW - boxW - 4.0f));
+        float boxY = snap.tooltipY + snap.contentH + 4.0f + FALLBACK_VISUAL_GAP;
+        if (boxY + boxH > snap.screenH - 4.0f) {
+            boxY = Math.max(4.0f, snap.tooltipY - 4.0f - FALLBACK_VISUAL_GAP - boxH);
+        }
+        int intX = (int) Math.floor(boxX);
+        int intY = (int) Math.floor(boxY);
+        float fracX = boxX - intX;
+        float fracY = boxY - intY;
+
         graphics.pose().pushPose();
-        graphics.pose().translate(0, 0, 500);
+        graphics.pose().translate(fracX, fracY, 500.0f);
         RenderSystem.enableBlend();
         try {
-            drawRoundedTooltipBox(graphics, subX, subY, subW, subH, typing);
-            int textX = subX + 9;
-            int textY = subY + (subH - font.lineHeight) / 2 + 1;
-            drawBlueWhiteGradientText(graphics, font, label, textX, textY, typing ? 0.65f : 1f);
-            if (typing) {
-                graphics.drawString(
-                        font, typingNote, textX + font.width(label), textY, 0xFF93A1B8, true);
-            }
+            drawRoundedTooltipBox(graphics, intX, intY, boxW, boxH, typing);
+            graphics.drawString(font, visualText, intX + 4, intY + 4, 0xFFFFFFFF, true);
         } finally {
             graphics.pose().popPose();
         }
@@ -222,7 +319,7 @@ public final class WzItemQuickAsk {
         WzPage page = liveWenzhouPage();
         if (page == null || !page.quickAskAvailable()) return false;
 
-        ItemStack stack = snap.stack.copyWithCount(1);
+        ItemStack stack = snap.stackCopy.copyWithCount(1);
         ResourceLocation id = snap.id;
         frameSnapshot = null;
         lastValidSnapshot = null;
@@ -334,49 +431,56 @@ public final class WzItemQuickAsk {
         return false;
     }
 
-    /** Draws a 2px-beveled rounded dark card matching JEI / Modern UI tooltip styling. */
+    /**
+     * Builds a single styled MutableComponent with per-codepoint blue-white gradient colors so
+     * ModernUI's HarfBuzz text shaper lays out the entire run with crisp native kerning.
+     */
+    private static MutableComponent buildHintComponent(
+            String label, String typingNote, boolean muted) {
+        MutableComponent root = Component.empty();
+        int cpCount = label.codePointCount(0, label.length());
+        int idx = 0;
+        for (int offset = 0; offset < label.length(); ) {
+            int cp = label.codePointAt(offset);
+            int charCount = Character.charCount(cp);
+            String glyph = label.substring(offset, offset + charCount);
+            float t = cpCount <= 1 ? 0.5f : (float) idx / (float) (cpCount - 1);
+            int rgb = sampleBlueWhiteGradient(t) & 0xFFFFFF;
+            if (muted) rgb = dimRgb(rgb, 0.65f);
+            root.append(Component.literal(glyph).withStyle(Style.EMPTY.withColor(rgb)));
+            idx++;
+            offset += charCount;
+        }
+        if (!typingNote.isEmpty()) {
+            root.append(Component.literal(typingNote).withStyle(Style.EMPTY.withColor(0x93A1B8)));
+        }
+        return root;
+    }
+
+    private static int dimRgb(int rgb, float factor) {
+        int r = Math.round(((rgb >> 16) & 0xFF) * factor);
+        int g = Math.round(((rgb >> 8) & 0xFF) * factor);
+        int b = Math.round((rgb & 0xFF) * factor);
+        return (r << 16) | (g << 8) | b;
+    }
+
+    /** Draws a 2px-beveled rounded dark card for non-ModernUI clients. */
     private static void drawRoundedTooltipBox(
             GuiGraphics g, int x, int y, int w, int h, boolean muted) {
         int bg = muted ? 0xB8090A0C : BOX_BG;
         int border = muted ? 0x90E0E4EC : BOX_BORDER;
-        // Fill interior with rounded 2px corners
         g.fill(x + 2, y + 1, x + w - 2, y + h - 1, bg);
         g.fill(x + 1, y + 2, x + w - 1, y + h - 2, bg);
 
-        // Crisp 1px light-gray border matching JEI / Modern UI tooltip outline
         g.fill(x + 2, y, x + w - 2, y + 1, border);
         g.fill(x + 2, y + h - 1, x + w - 2, y + h, border);
         g.fill(x, y + 2, x + 1, y + h - 2, border);
         g.fill(x + w - 1, y + 2, x + w, y + h - 2, border);
 
-        // 4 corner pixels for clean rounded silhouette
         g.fill(x + 1, y + 1, x + 2, y + 2, border);
         g.fill(x + w - 2, y + 1, x + w - 1, y + 2, border);
         g.fill(x + 1, y + h - 2, x + 2, y + h - 1, border);
         g.fill(x + w - 2, y + h - 2, x + w - 1, y + h - 1, border);
-    }
-
-    private static void drawBlueWhiteGradientText(
-            GuiGraphics g, Font font, String text, int x, int y, float alphaScale) {
-        int totalWidth = Math.max(1, font.width(text));
-        int cursor = x;
-        for (int offset = 0; offset < text.length(); ) {
-            int cp = text.codePointAt(offset);
-            int charCount = Character.charCount(cp);
-            String glyph = text.substring(offset, offset + charCount);
-            int glyphWidth = font.width(glyph);
-            float t = Math.min(1f, Math.max(0f, ((cursor - x) + glyphWidth * 0.5f) / totalWidth));
-            int color = scaleAlpha(sampleBlueWhiteGradient(t), alphaScale);
-            g.drawString(font, glyph, cursor, y, color, true);
-            cursor += glyphWidth;
-            offset += charCount;
-        }
-    }
-
-    private static int scaleAlpha(int argb, float scale) {
-        if (scale >= 0.999f) return argb;
-        int a = Math.max(8, Math.min(255, Math.round(((argb >>> 24) & 0xFF) * scale)));
-        return (a << 24) | (argb & 0xFFFFFF);
     }
 
     private static int sampleBlueWhiteGradient(float t) {
@@ -396,6 +500,140 @@ public final class WzItemQuickAsk {
         int cg = Math.round(ag + (bg - ag) * t);
         int cb = Math.round(ab + (bb - ab) * t);
         return (ca << 24) | (cr << 16) | (cg << 8) | cb;
+    }
+
+    /**
+     * Custom ClientTooltipComponent (intentionally not ClientTextTooltip so ModernUI never adds a
+     * title separator bar or centers it) padded to the exact width of the main tooltip above.
+     */
+    private record QuickAskTooltipComponent(
+            FormattedCharSequence text, int targetWidth, int lineHeight)
+            implements ClientTooltipComponent {
+        @Override
+        public int getHeight() {
+            // ModernUI subtracts 2 from height when rendering a single-component tooltip.
+            return lineHeight + 2;
+        }
+
+        @Override
+        public int getWidth(Font font) {
+            return targetWidth;
+        }
+
+        @Override
+        public void renderText(
+                Font font, int x, int y, Matrix4f pose, MultiBufferSource.BufferSource buffer) {
+            font.drawInBatch(
+                    text,
+                    (float) x,
+                    (float) y,
+                    0xFFFFFFFF,
+                    true,
+                    pose,
+                    buffer,
+                    Font.DisplayMode.NORMAL,
+                    0,
+                    0xF000F0);
+        }
+    }
+
+    /** Optional reflection bridge to ModernUI's TooltipRenderer (zero hard dependency). */
+    private static final class ModernUiBridge {
+        private static volatile boolean initialized;
+        private static volatile boolean available;
+        private static Field sTooltipField;
+        private static Field sExactPositioningField;
+        private static Method getInstanceMethod;
+        private static Method drawExtTooltipMethod;
+
+        private static void ensureInit() {
+            if (initialized) return;
+            synchronized (ModernUiBridge.class) {
+                if (initialized) return;
+                try {
+                    Class<?> tooltipCls = Class.forName("icyllis.modernui.mc.TooltipRenderer");
+                    Class<?> uiManagerCls = Class.forName("icyllis.modernui.mc.UIManager");
+                    sTooltipField = tooltipCls.getField("sTooltip");
+                    sExactPositioningField = tooltipCls.getField("sExactPositioning");
+                    getInstanceMethod = uiManagerCls.getMethod("getInstance");
+                    drawExtTooltipMethod =
+                            uiManagerCls.getMethod(
+                                    "drawExtTooltip",
+                                    ItemStack.class,
+                                    GuiGraphics.class,
+                                    List.class,
+                                    int.class,
+                                    int.class,
+                                    Font.class,
+                                    int.class,
+                                    int.class,
+                                    ClientTooltipPositioner.class);
+                    available = true;
+                } catch (Throwable ignored) {
+                    available = false;
+                } finally {
+                    initialized = true;
+                }
+            }
+        }
+
+        static boolean isTooltipActive() {
+            ensureInit();
+            if (!available) return false;
+            try {
+                return sTooltipField.getBoolean(null);
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+
+        static boolean isExactPositioning() {
+            ensureInit();
+            if (!available) return false;
+            try {
+                return sExactPositioningField.getBoolean(null);
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
+
+        static boolean drawCapsule(
+                ItemStack stack,
+                GuiGraphics graphics,
+                Font font,
+                FormattedCharSequence text,
+                int targetWidth,
+                float subX,
+                float subY,
+                int screenW,
+                int screenH) {
+            ensureInit();
+            if (!available) return false;
+            try {
+                Object manager = getInstanceMethod.invoke(null);
+                if (manager == null) return false;
+                int intX = (int) Math.floor(subX);
+                int intY = (int) Math.floor(subY);
+                float fracX = subX - intX;
+                float fracY = subY - intY;
+                ClientTooltipPositioner fixedPos =
+                        (sw, sh, mx, my, w, h) -> new Vector2i(intX, intY);
+                List<ClientTooltipComponent> list =
+                        List.of(new QuickAskTooltipComponent(text, targetWidth, font.lineHeight));
+                graphics.pose().pushPose();
+                graphics.pose().translate(fracX, fracY, 10.0f);
+                try {
+                    drawExtTooltipMethod.invoke(
+                            manager, stack, graphics, list, intX, intY, font, screenW, screenH,
+                            fixedPos);
+                } finally {
+                    graphics.pose().popPose();
+                }
+                return true;
+            } catch (Throwable ignored) {
+                return false;
+            }
+        }
     }
 
     @Mod.EventBusSubscriber(

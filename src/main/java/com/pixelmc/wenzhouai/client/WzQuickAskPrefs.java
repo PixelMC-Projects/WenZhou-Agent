@@ -31,18 +31,18 @@ final class WzQuickAskPrefs {
         }
 
         static Mode parse(String value) {
-            if (value == null) return GLOBAL;
+            if (value == null) return OFF;
             String normalized = value.trim().toLowerCase(Locale.ROOT);
             for (Mode mode : values()) {
                 if (mode.wire.equals(normalized)) return mode;
             }
-            return GLOBAL;
+            return OFF;
         }
     }
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static volatile boolean loaded;
-    private static volatile Mode mode = Mode.GLOBAL;
+    private static volatile Mode mode = Mode.OFF;
 
     private WzQuickAskPrefs() {}
 
@@ -76,7 +76,7 @@ final class WzQuickAskPrefs {
                     }
                 }
             } catch (Exception ignored) {
-                mode = Mode.GLOBAL;
+                mode = Mode.OFF;
             }
         }
     }
