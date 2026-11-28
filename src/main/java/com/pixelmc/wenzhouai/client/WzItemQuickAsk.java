@@ -56,7 +56,7 @@ public final class WzItemQuickAsk {
     private static final int GRAD_LEFT = 0xFF74C4FF;
     private static final int GRAD_MID = 0xFFC8E9FF;
     private static final int GRAD_RIGHT = 0xFFFFFFFF;
-    private static final int GAP = 5;
+    private static final int GAP = 6;
     private static final int SUB_HEIGHT = 20;
     private static final long SNAPSHOT_TTL_NANOS = 150_000_000L;
 
@@ -83,7 +83,12 @@ public final class WzItemQuickAsk {
         frameSnapshot = null;
     }
 
-    @SubscribeEvent(priority = EventPriority.LOWEST)
+    /**
+     * Captures hovered item tooltip geometry at NORMAL priority so tooltip replacement mods such as
+     * ModernUI (which renders at HIGH and cancels RenderTooltipEvent.Pre at LOW to suppress vanilla
+     * rendering) do not hide the event from quick-ask.
+     */
+    @SubscribeEvent(priority = EventPriority.NORMAL)
     public static void onTooltipPre(RenderTooltipEvent.Pre event) {
         if (event.isCanceled()) return;
         WzQuickAskPrefs.Mode mode = WzQuickAskPrefs.mode();
